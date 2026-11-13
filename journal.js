@@ -447,7 +447,16 @@ async function start() {
     $("dev-login").hidden = !session.dev_login;
     return;
   }
-  $("identity").textContent = session.display_name || "";
+  const identity = $("identity");
+  identity.textContent = session.display_name || "";
+  if (session.avatar_url) {
+    const avatar = document.createElement("img");
+    avatar.alt = "";
+    avatar.referrerPolicy = "no-referrer";
+    avatar.addEventListener("error", () => avatar.remove(), {once: true});
+    avatar.src = session.avatar_url;
+    identity.prepend(avatar);
+  }
   $("grants").hidden = false;
   $("logout").hidden = false;
   $("journal").hidden = false;

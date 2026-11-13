@@ -68,3 +68,6 @@ fieldset label { display: inline-block; margin-right: .7rem; }
 .brand { display: inline-flex; align-items: center; gap: .35rem; }
 .brand img { width: 2rem; height: 2rem; object-fit: contain; }
 .guest { background: linear-gradient(145deg, #e9dff7, #f8edf7 65%, #ffe6d9); padding: clamp(1.5rem, 5vw, 4rem); border: 1px solid var(--line); }
+
+#identity { display: inline-flex; align-items: center; gap: .45rem; overflow-wrap: anywhere; }
+#identity img { width: 1.75rem; height: 1.75rem; border-radius: 50%; object-fit: cover; }
