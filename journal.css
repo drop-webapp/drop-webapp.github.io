@@ -1,0 +1,66 @@
+:root {
+  color-scheme: light;
+  --paper: #f7f4ed;
+  --sheet: #fffcf5;
+  --ink: #242825;
+  --muted: #575c57;
+  --line: #c9c5b9;
+  --blue: #214fc0;
+  --blue-dark: #193f9d;
+  --serif: "Instrument Serif", "Baskervville", "Songti SC", "Noto Serif CJK SC", Georgia, serif;
+  --sans: "Instrument Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 1rem/1.55 var(--sans); }
+.wrap { max-width: 86rem; width: calc(100% - clamp(2rem, 10vw, 11rem)); margin-inline: auto; }
+.masthead { display: flex; align-items: center; gap: 1rem; border-bottom: 1px solid var(--ink); padding-block: 1.15rem; }
+.brand { margin-right: auto; color: var(--ink); font: bold 1.85rem/1.2 var(--serif); text-decoration: none; }
+.brand span { color: var(--blue); font-size: .95rem; font-weight: normal; font-style: italic; margin-left: .3rem; }
+main { padding-block: clamp(1.8rem, 5vw, 5rem); }
+.spread { display: grid; grid-template-columns: minmax(15rem, 1fr) minmax(0, 2.15fr); gap: clamp(2rem, 6vw, 6rem); align-items: start; }
+.capture { border-top: .23rem solid var(--blue); padding-top: .9rem; }
+.capture h2 { font: 1.65rem/1.1 var(--serif); margin: 0 0 1.05rem; }
+h1 { margin: 0; font: 500 clamp(2.5rem, 6vw, 5.5rem)/1.06 var(--serif); letter-spacing: -.035em; }
+.guest h1 { font-size: clamp(3.5rem, 12vw, 10rem); }
+.guest p { margin-block: 1.5rem; color: var(--muted); }
+.guest .quiet { margin-left: .65rem; }
+.date-row { display: flex; justify-content: space-between; align-items: end; gap: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--ink); }
+.day-label, #year { color: var(--blue); font-weight: 600; font-size: .85rem; margin: 0 0 .45rem; }
+#year { white-space: nowrap; }
+.date-tools, .capture-tools, .capture-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; margin-block: .75rem; }
+button, input, textarea, select { font: inherit; color: inherit; }
+button, .primary, input:not([type="checkbox"]), textarea, select { border: 1px solid var(--line); background: var(--sheet); border-radius: 0; padding: .4rem .65rem; min-width: 0; }
+button, summary, .primary { cursor: pointer; }
+button:disabled { opacity: .55; cursor: wait; }
+button:hover:not(:disabled), select:hover { border-color: var(--blue); }
+.quiet { background: transparent; border-color: transparent; color: var(--blue); }
+.primary { display: inline-block; color: var(--sheet); background: var(--blue); border-color: var(--blue); text-decoration: none; padding: .5rem 1.05rem; }
+.primary:hover:not(:disabled) { background: var(--blue-dark); }
+:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+textarea { width: 100%; display: block; resize: vertical; min-height: 8.5rem; padding: .8rem; }
+details { border-top: 1px solid var(--line); padding-block: .7rem; }
+summary { width: fit-content; color: var(--blue); }
+.fields { display: grid; gap: .6rem; padding-top: .6rem; }
+.fields label { display: grid; gap: .2rem; }
+.waterfall { columns: 2 15rem; column-gap: .9rem; }
+.note { display: inline-block; width: 100%; break-inside: avoid; margin: 0 0 .9rem; border-top: 1px solid var(--ink); background: var(--sheet); padding: .85rem; overflow-wrap: anywhere; }
+.note p { white-space: pre-wrap; margin: .55rem 0; }
+.note-meta { color: var(--muted); font-size: .86rem; }
+.note time { color: var(--blue); font-size: .83rem; font-variant-numeric: tabular-nums; }
+.note-actions { display: flex; flex-wrap: wrap; align-items: center; font-size: .85rem; }
+.note-actions label { margin-left: auto; }
+#events label, #links > div { display: block; padding-block: .3rem; overflow-wrap: anywhere; }
+.share { margin-top: 1.25rem; }
+fieldset { border: 1px solid var(--line); padding: .5rem .7rem; margin: 0 0 .65rem; }
+fieldset label { display: inline-block; margin-right: .7rem; }
+#share-result { margin-top: .6rem; overflow-wrap: anywhere; }
+#notice { margin: 0 0 1.1rem; color: var(--blue-dark); border-left: 2px solid var(--blue); padding-left: .65rem; }
+#entry-state, #public-state { color: var(--muted); }
+.public { max-width: 58rem; }
+.public h1 { padding-bottom: 1.3rem; border-bottom: 1px solid var(--ink); }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (max-width: 44rem) {
+  .spread { grid-template-columns: 1fr; }
+  .waterfall { columns: 1; }
+}

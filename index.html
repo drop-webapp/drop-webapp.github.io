@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#f7f4ed">
+  <title>一滴 Drop</title>
+  <link rel="stylesheet" href="./journal.css">
+  <script src="./journal.js" defer></script>
+</head>
+<body data-api-origin="https://api.drop.jyonn.space" data-share-token="">
+  <header class="masthead wrap">
+    <a class="brand" href="/">一滴 <span lang="en">Drop</span></a>
+    <span id="identity"></span>
+    <a id="grants" class="quiet" href="https://api.drop.jyonn.space/oauth/grants/" hidden>应用授权</a>
+    <button id="logout" class="quiet" type="button" hidden>退出</button>
+  </header>
+  <main class="wrap">
+    <p id="notice" role="status" hidden></p>
+    <section id="guest" class="guest" hidden>
+      <h1>把今天<br>留下一滴。</h1>
+      <p>随手记下此刻，日后按天回看。</p>
+      <a class="primary" href="https://api.drop.jyonn.space/api/integrations/frienden/login/">使用 Frienden 登录</a>
+      <button class="quiet" id="dev-login" type="button" hidden>本地开发登录</button>
+    </section>
+    <section id="journal" hidden>
+      <div class="spread">
+        <section class="capture" aria-labelledby="capture-title">
+          <h2 id="capture-title">此刻</h2>
+          <form id="editor">
+            <label class="sr-only" for="text">记录正文</label>
+            <textarea id="text" name="text" rows="5" placeholder="此刻想记下什么？" required></textarea>
+            <div class="capture-tools">
+              <button class="quiet" type="button" id="record" aria-pressed="false">语音转文字</button>
+              <button class="quiet" type="button" id="locate">记录位置</button>
+            </div>
+            <details id="details">
+              <summary>时间、地点与日程</summary>
+              <div class="fields">
+                <label>记录时间<input type="datetime-local" name="occurred_at"></label>
+                <label>城市<input name="city" maxlength="255"></label>
+                <label>地点<input name="place" maxlength="255"></label>
+                <label>关联日程<select name="event"><option value="">无</option></select></label>
+                <output id="coordinates"></output>
+                <button type="button" id="clear-location" class="quiet" hidden>移除坐标</button>
+              </div>
+            </details>
+            <div class="capture-actions">
+              <button class="primary" type="submit" id="save">记一滴</button>
+              <button class="quiet" type="button" id="cancel" hidden>取消编辑</button>
+            </div>
+          </form>
+        </section>
+        <section class="recall" aria-labelledby="day-title">
+          <div class="date-row">
+            <div><p class="day-label">按日回顾</p><h1 id="day-title"></h1></div>
+            <span id="year"></span>
+          </div>
+          <nav class="date-tools" aria-label="选择回顾日期">
+            <button type="button" id="prev" aria-label="前一天">←</button>
+            <label class="sr-only" for="date">回顾日期</label><input type="date" id="date">
+            <button type="button" id="next" aria-label="后一天">→</button>
+            <button type="button" id="today" class="quiet">今天</button>
+          </nav>
+          <details id="calendar"><summary>当天日程</summary><div id="events"></div>
+            <button type="button" id="archive" hidden>归档所选日程</button>
+          </details>
+          <p id="entry-state" role="status"></p>
+          <div class="waterfall" id="entries"></div>
+          <details id="share" class="share">
+            <summary>分享与链接管理</summary>
+            <p>勾选当天要分享的记录，再选择接收方可见的字段。</p>
+            <form id="share-form">
+              <fieldset><legend>可见字段</legend>
+                <label><input type="checkbox" name="fields" value="text" checked> 正文</label>
+                <label><input type="checkbox" name="fields" value="occurred_at"> 时间</label>
+                <label><input type="checkbox" name="fields" value="city"> 城市</label>
+                <label><input type="checkbox" name="fields" value="place"> 地点</label>
+                <label><input type="checkbox" name="fields" value="latitude"> 纬度</label>
+                <label><input type="checkbox" name="fields" value="longitude"> 经度</label>
+                <label><input type="checkbox" name="fields" value="event"> 日程</label>
+              </fieldset>
+              <label>有效期 <select name="expires_in"><option value="3600">1 小时</option><option value="86400" selected>1 天</option><option value="604800">7 天</option></select></label>
+              <button type="submit">创建链接</button>
+            </form>
+            <div id="share-result"></div>
+            <div id="links"></div>
+          </details>
+        </section>
+      </div>
+    </section>
+    <section id="public" class="public" hidden>
+      <h1>分享的记录</h1>
+      <p id="public-state" role="status"></p>
+      <div class="waterfall" id="public-entries"></div>
+    </section>
+  </main>
+</body>
+</html>
