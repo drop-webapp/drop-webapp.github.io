@@ -7,8 +7,8 @@
   <meta name="theme-color" content="#f4eff9">
   <link rel="icon" type="image/png" href="./drop-icon.png?v=5ad550d3fba9">
   <title>一滴 Drop</title>
-  <link rel="stylesheet" href="./journal.css?v=49a793ee7d3a">
-  <script src="./journal.js?v=17bce25aac04" defer></script>
+  <link rel="stylesheet" href="./journal.css?v=f1977c52014a">
+  <script src="./journal.js?v=16ea88c869f6" defer></script>
 </head>
 <body data-api-origin="https://api.drop.jyonn.space" data-share-token="">
   <header class="masthead wrap">
@@ -39,12 +39,13 @@
               </div>
               <button type="button" class="quiet" id="backdate" hidden></button>
               <details id="details">
-                <summary>时间、地点与日程</summary>
+                <summary>记录详情</summary>
                 <div class="fields">
-                  <label>记录时间<input type="datetime-local" name="occurred_at"></label>
-                  <label>城市<input name="city" maxlength="255"></label>
-                  <label>地点<input name="place" maxlength="255"></label>
-                  <label>关联日程<select name="event"><option value="">无</option></select></label>
+                  <input type="hidden" name="occurred_at"><output id="capture-time"></output>
+                  <input type="hidden" name="city">
+                  <input type="hidden" name="place">
+                  <label hidden>关联日程<select name="event"><option value="">无</option></select></label>
+                  <div id="event-options" role="group" aria-label="关联日程"></div>
                   <output id="coordinates"></output>
                   <button type="button" id="clear-location" class="quiet" hidden>移除坐标</button>
                 </div>
@@ -64,11 +65,23 @@
           </div>
           <nav class="date-tools" aria-label="选择回顾日期">
             <button type="button" id="prev" aria-label="前一天">←</button>
-            <label class="sr-only" for="date">回顾日期</label><input type="date" id="date">
+            <input type="hidden" id="date"><button type="button" id="open-date" aria-expanded="false" aria-controls="date-panel">选日期</button>
             <button type="button" id="next" aria-label="后一天">→</button>
             <button type="button" id="today" class="quiet">回到今天</button>
             <button type="button" id="write" class="quiet">写一条</button>
           </nav>
+          <section id="date-panel" class="date-panel" aria-label="选择日期" hidden>
+            <div class="date-tools"><button id="prev-month" aria-label="上个月">‹</button><strong id="month-label" aria-live="polite"></strong><button id="next-month" aria-label="下个月">›</button></div>
+            <div class="month-grid" id="month-days"></div>
+          </section>
+          <form id="search-form" class="date-tools" role="search">
+            <label class="sr-only" for="search-text">搜索日记</label>
+            <input id="search-text" type="search" maxlength="120" placeholder="搜索正文、地点或日程" required>
+            <button type="submit">搜索</button><button type="button" id="clear-search" hidden>返回当天</button>
+          </form>
+          <p id="search-status" role="status"></p>
+          <div id="search-results"></div>
+          <div id="daily-view">
           <details id="calendar"><summary>当天日程</summary><div id="events"></div>
             <button type="button" id="archive" hidden>归档所选日程</button>
           </details>
@@ -88,12 +101,13 @@
                 <label><input type="checkbox" name="fields" value="longitude"> 经度</label>
                 <label><input type="checkbox" name="fields" value="event"> 日程</label>
               </fieldset>
-              <label>有效期 <select name="expires_in"><option value="3600">1 小时</option><option value="86400" selected>1 天</option><option value="604800">7 天</option></select></label>
+              <fieldset><legend>有效期</legend><label><input type="radio" name="expires_in" value="3600"> 1 小时</label><label><input type="radio" name="expires_in" value="86400" checked> 1 天</label><label><input type="radio" name="expires_in" value="604800"> 7 天</label></fieldset>
               <button type="submit" id="create-share" disabled>创建链接</button>
             </form>
             <div id="share-result"></div>
             <div id="links"></div>
           </details>
+          </div>
         </section>
       </div>
     </section>

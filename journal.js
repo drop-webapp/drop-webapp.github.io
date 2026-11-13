@@ -28,6 +28,8 @@ let loadVersion = 0;
 let recorder = null;
 let recordingBusy = false;
 let saving = false;
+let shownMonth;
+let searchVersion = 0;
 let editorBaseline = editorSnapshot();
 let unloadWarning = false;
 
@@ -132,12 +134,12 @@ function updateShareSelection() {
     !$("share-form").querySelector('input[name="fields"]:checked');
 }
 
-function renderEntries(target, entries, isPublic = false) {
+function renderEntries(target, entries, isPublic = false, isSearch = false) {
   target.replaceChildren(...entries.map((entry) => {
     const card = element("article", undefined, "note");
     if (entry.occurred_at) {
       const date = new Date(entry.occurred_at);
-      const label = isPublic ? date.toLocaleString("zh-CN") : timeFormatter.format(date);
+      const label = isPublic || isSearch ? date.toLocaleString("zh-CN") : timeFormatter.format(date);
       const time = element("time", label);
       time.dateTime = entry.occurred_at;
       card.append(time);
@@ -160,7 +162,8 @@ function renderEntries(target, entries, isPublic = false) {
           selected.delete(entry.id);
           updateShareSelection();
           if (editing?.id === entry.id) resetEditor();
-          await loadDay();
+          if (isSearch) await searchEntries();
+          else await loadDay();
         });
       });
       const label = element("label");
@@ -180,11 +183,11 @@ function renderEntries(target, entries, isPublic = false) {
       const menu = element("details", undefined, "note-menu");
       const menuLabel = element("summary", "更多");
       remove.classList.add("destructive");
-      menu.append(menuLabel, button("编辑", () => {
-        menu.open = false;
-        editEntry(entry);
-      }), remove);
-      actions.append(label, menu);
+      menu.append(menuLabel, remove);
+      actions.append(button("编辑", () => editEntry(entry)));
+      if (isSearch) actions.append(button("查看当天", () => setDay(dateKey(entry.occurred_at))));
+      else actions.append(label);
+      actions.append(menu);
       card.append(actions);
     }
     return card;
@@ -210,6 +213,17 @@ function renderEventOptions(current) {
     new Option(eventName(event) || "未命名日程", event.id)));
   select.value = chosen?.id || "";
   select.eventById = eventById;
+  const options = [...select.options];
+  $("event-options").replaceChildren(...options.map((option) => {
+    const control = button(option.textContent, () => {
+      select.value = option.value;
+      renderEventOptions();
+      syncDraftWarning();
+    });
+    control.disabled = select.disabled;
+    control.setAttribute("aria-pressed", String(option.selected));
+    return control;
+  }));
 }
 
 function resetEditor() {
@@ -221,6 +235,7 @@ function resetEditor() {
   editor.reset();
   showCoordinates(null);
   renderEventOptions(null);
+  $("capture-time").textContent = "保存时自动记录时间";
   $("capture-title").textContent = "写日记";
   $("save").textContent = "记一滴";
   $("cancel").hidden = true;
@@ -247,6 +262,7 @@ function editEntry(entry) {
   showCoordinates(value);
   renderEventOptions(entry.event);
   $("details").open = true;
+  $("capture-time").textContent = new Date(entry.occurred_at).toLocaleString("zh-CN");
   $("capture-title").textContent = "编辑记录";
   $("save").textContent = "保存修改";
   $("cancel").hidden = false;
@@ -312,9 +328,11 @@ function renderCalendar(events) {
 }
 
 function setDay(day, clearSelection = true) {
+  closeSearch();
   if (clearSelection) selected.clear();
   updateShareSelection();
   $("date").value = day;
+  if (!$("date-panel").hidden) renderMonth(new Date(day + "T12:00:00"));
   return loadDay();
 }
 
@@ -363,6 +381,19 @@ editor.addEventListener("submit", (event) => {
       const occurredAt = originalTime ? editing.occurred_at : new Date(enteredAt || Date.now()).toISOString();
       const choice = fields.event.value;
       const version = editorVersion;
+      if (!editing && !coordinates && navigator.permissions && navigator.geolocation) {
+        try {
+          const permission = await navigator.permissions.query({name: "geolocation"});
+          if (permission.state === "granted") {
+            const position = await new Promise((resolve, reject) =>
+              navigator.geolocation.getCurrentPosition(resolve, reject, {timeout: 1500, maximumAge: 60000}));
+            const {latitude, longitude} = position.coords;
+            showCoordinates({latitude, longitude});
+          }
+        } catch {
+          // Location is optional. Save the entry if the browser cannot provide it.
+        }
+      }
       const body = {
         text,
         occurred_at: occurredAt,
@@ -412,6 +443,7 @@ $("backdate").addEventListener("click", () => {
   const time = editor.elements.occurred_at;
   const clock = time.value.slice(11) || localDateTime(Date.now()).slice(11);
   time.value = $("date").value + "T" + clock;
+  $("capture-time").textContent = new Date(time.value).toLocaleString("zh-CN");
   $("details").open = true;
   syncDraftWarning();
   editor.elements.text.focus();
@@ -419,7 +451,76 @@ $("backdate").addEventListener("click", () => {
 $("write").addEventListener("click", () => editor.elements.text.focus());
 $("retry-day").addEventListener("click", loadDay);
 $("share-form").addEventListener("change", updateShareSelection);
-$("date").addEventListener("change", () => setDay($("date").value || dateKey()));
+function renderMonth(date) {
+  shownMonth = new Date(date.getFullYear(), date.getMonth(), 1, 12);
+  $("month-label").textContent = shownMonth.toLocaleDateString("zh-CN", {year: "numeric", month: "long"});
+  const nodes = [..."一二三四五六日"].map((day) => element("span", day));
+  for (let i = 0; i < (shownMonth.getDay() + 6) % 7; i++) nodes.push(element("span"));
+  const year = shownMonth.getFullYear();
+  const month = shownMonth.getMonth();
+  const count = new Date(year, month + 1, 0).getDate();
+  for (let day = 1; day <= count; day++) {
+    const value = dateKey(new Date(year, month, day, 12));
+    const cell = button(String(day), () => {
+      toggleDatePanel(false);
+      $("open-date").focus();
+      void setDay(value);
+    });
+    cell.setAttribute("aria-label", value);
+    cell.setAttribute("aria-pressed", String(value === $("date").value));
+    if (value === dateKey()) cell.setAttribute("aria-current", "date");
+    nodes.push(cell);
+  }
+  $("month-days").replaceChildren(...nodes);
+}
+
+function toggleDatePanel(open) {
+  $("date-panel").hidden = !open;
+  $("open-date").setAttribute("aria-expanded", String(open));
+  if (open) renderMonth(new Date($("date").value + "T12:00:00"));
+}
+
+$("open-date").addEventListener("click", () => toggleDatePanel($("date-panel").hidden));
+$("date-panel").addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  toggleDatePanel(false);
+  $("open-date").focus();
+});
+$("prev-month").addEventListener("click", () => renderMonth(new Date(shownMonth.getFullYear(), shownMonth.getMonth() - 1, 1)));
+$("next-month").addEventListener("click", () => renderMonth(new Date(shownMonth.getFullYear(), shownMonth.getMonth() + 1, 1)));
+
+function closeSearch() {
+  searchVersion += 1;
+  $("daily-view").hidden = false;
+  $("clear-search").hidden = true;
+  $("search-results").replaceChildren();
+  $("search-status").textContent = "";
+}
+
+async function searchEntries() {
+  const query = $("search-text").value.trim();
+  if (!query) return closeSearch();
+  const version = ++searchVersion;
+  $("daily-view").hidden = true;
+  $("clear-search").hidden = false;
+  $("search-results").replaceChildren();
+  $("search-status").textContent = "正在搜索…";
+  try {
+    const {entries} = await api("entries/?" + new URLSearchParams({q: query}));
+    if (version !== searchVersion) return;
+    renderEntries($("search-results"), entries, false, true);
+    $("search-status").textContent = entries.length === 60 ? "显示最近 60 条匹配记录" :
+      entries.length ? `找到 ${entries.length} 条记录` : "没有匹配的记录。";
+  } catch (error) {
+    if (version === searchVersion) $("search-status").textContent = error.message;
+  }
+}
+
+$("search-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  void searchEntries();
+});
+$("clear-search").addEventListener("click", closeSearch);
 $("prev").addEventListener("click", () => moveDay(-1));
 $("next").addEventListener("click", () => moveDay(1));
 $("today").addEventListener("click", () => setDay(dateKey()));
@@ -578,6 +679,7 @@ async function start() {
   $("grants").hidden = false;
   $("logout").hidden = false;
   $("journal").hidden = false;
+  resetEditor();
   await setDay(dateKey());
 }
 start().catch((error) => notice(error.message));

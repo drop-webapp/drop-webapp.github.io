@@ -30,7 +30,7 @@ h1 { margin: 0; font: 500 clamp(2.5rem, 6vw, 5.5rem)/1.06 var(--serif); letter-s
 #year { white-space: nowrap; }
 .date-tools, .capture-tools, .capture-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; margin-block: .75rem; }
 button, input, textarea, select { font: inherit; color: inherit; }
-button, .primary, input:not([type="checkbox"]), textarea, select { border: 1px solid var(--line); background: var(--sheet); border-radius: 0; padding: .4rem .65rem; min-width: 0; }
+button, .primary, input:not([type="checkbox"], [type="radio"]), textarea, select { border: 1px solid var(--line); background: var(--sheet); border-radius: 0; padding: .4rem .65rem; min-width: 0; }
 button, summary, .primary { cursor: pointer; }
 button:disabled { opacity: .55; cursor: wait; }
 button:hover:not(:disabled), select:hover { border-color: var(--accent); }
@@ -43,7 +43,7 @@ details { border-top: 1px solid var(--line); padding-block: .7rem; }
 summary { width: fit-content; color: var(--accent); }
 .fields { display: grid; gap: .6rem; padding-top: .6rem; }
 .fields label { display: grid; gap: .2rem; }
-.waterfall { columns: 2 15rem; column-gap: .9rem; }
+.waterfall { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); gap: .9rem; align-items: start; }
 .note { display: inline-block; width: 100%; break-inside: avoid; margin: 0 0 .9rem; border-top: 1px solid var(--ink); background: var(--sheet); padding: .85rem; overflow-wrap: anywhere; }
 .note p { white-space: pre-wrap; margin: .55rem 0; }
 .note-meta { color: var(--muted); font-size: .86rem; }
@@ -62,7 +62,7 @@ fieldset label { display: inline-block; margin-right: .7rem; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (max-width: 44rem) {
   .spread { grid-template-columns: 1fr; }
-  .waterfall { columns: 1; }
+  .waterfall { grid-template-columns: 1fr; }
 }
 
 .brand { display: inline-flex; align-items: center; gap: .35rem; }
@@ -88,8 +88,8 @@ h1 { font: 700 clamp(1.85rem, 4.5vw, 3rem)/1.14 var(--sans); }
 .capture { background: var(--sheet); border: 1px solid var(--line); border-radius: 1.25rem; padding: clamp(.9rem, 2.5vw, 1.4rem); }
 .capture h2 { font: 650 1.25rem/1.2 var(--sans); }
 .date-row { border-color: var(--line); }
-button, .primary, summary, input:not([type="checkbox"]), select { min-height: 44px; }
-button, .primary, input:not([type="checkbox"]), textarea, select { border-radius: .75rem; }
+button, .primary, summary, input:not([type="checkbox"], [type="radio"]), select { min-height: 44px; }
+button, .primary, input:not([type="checkbox"], [type="radio"]), textarea, select { border-radius: .75rem; }
 .primary { display: inline-flex; align-items: center; }
 .capture-tools .quiet, .date-tools .quiet { background: var(--tint); }
 summary { align-content: center; }
@@ -113,3 +113,14 @@ fieldset label, #events label { min-height: 44px; align-content: center; }
 .editor-controls { border: 0; padding: 0; margin: 0; min-inline-size: 0; }
 #editor-status { margin: .35rem 0 0; font-size: .9rem; }
 #editor-status:empty { margin: 0; }
+
+.date-panel { max-width: 25rem; background: var(--sheet); border: 1px solid var(--line); border-radius: 1rem; padding: .65rem; }
+.date-panel .date-tools { justify-content: space-between; margin-top: 0; }
+.month-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); text-align: center; gap: 2px; }
+.month-grid button { padding-inline: 0; }
+button[aria-pressed="true"] { background: var(--accent); color: var(--sheet); }
+.month-grid [aria-current="date"]:not([aria-pressed="true"]) { outline: 1px solid var(--accent); outline-offset: -2px; }
+#event-options { display: flex; flex-wrap: wrap; gap: .3rem; }
+#search-text { flex: 1; }
+#search-results .note { display: block; }
+input[type="radio"] { accent-color: var(--accent); }
