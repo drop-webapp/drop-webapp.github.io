@@ -7,8 +7,8 @@
   <meta name="theme-color" content="#f4eff9">
   <link rel="icon" type="image/png" href="./drop-icon.png?v=5ad550d3fba9">
   <title>一滴 Drop</title>
-  <link rel="stylesheet" href="./journal.css?v=3c6d2e2dc3d3">
-  <script src="./journal.js?v=a0cbd116e2b1" defer></script>
+  <link rel="stylesheet" href="./journal.css?v=30016cca7c6b">
+  <script src="./journal.js?v=5e85d275d88f" defer></script>
 </head>
 <body data-api-origin="https://api.drop.jyonn.space" data-share-token="">
   <header class="masthead wrap">
@@ -26,6 +26,18 @@
       <button class="quiet" id="dev-login" type="button" hidden>本地开发登录</button>
     </section>
     <section id="journal" hidden>
+      <div class="voice-home">
+        <button type="button" id="voice-drop" aria-label="开始录音" aria-describedby="voice-status" aria-pressed="false">
+          <img src="./drop-icon.png?v=5ad550d3fba9" width="256" height="256" alt="">
+        </button>
+        <p id="voice-status" role="status">轻点水滴，记下此刻</p>
+        <div class="voice-secondary">
+          <button type="button" class="quiet" id="quick-write">写文字</button>
+          <button type="button" class="quiet" data-open="history">回顾</button>
+        </div>
+      </div>
+      <dialog id="history" class="panel drawer" aria-labelledby="day-title">
+        <header class="panel-header"><button type="button" data-close="history">关闭</button></header>
       <div class="spread">
         <section class="recall" aria-labelledby="day-title">
           <div class="date-row">
@@ -54,6 +66,7 @@
           </div>
         </section>
       </div>
+      </dialog>
     </section>
 <dialog id="compose" class="panel sheet" aria-labelledby="capture-title">
 <header class="panel-header"><h2 id="capture-title">写日记</h2><button type="button" data-close="compose">关闭</button></header>

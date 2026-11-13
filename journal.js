@@ -28,6 +28,7 @@ let editorVersion = 0;
 let loadVersion = 0;
 let recorder = null;
 let recordingBusy = false;
+let capturedAt = null;
 let saving = false;
 let shownMonth;
 let searchVersion = 0;
@@ -236,6 +237,7 @@ function renderEventOptions(current) {
 function resetEditor() {
   editorVersion += 1;
   editing = null;
+  capturedAt = null;
   editor.elements.text.required = true;
   editor.elements.occurred_at.disabled = false;
   editor.elements.event.disabled = false;
@@ -392,7 +394,7 @@ editor.addEventListener("submit", (event) => {
       if (!text && !editing?.archived) throw new Error("请输入记录正文。");
       const enteredAt = fields.occurred_at.value;
       const originalTime = editing && enteredAt === localDateTime(editing.occurred_at);
-      const occurredAt = originalTime ? editing.occurred_at : new Date(enteredAt || Date.now()).toISOString();
+      const occurredAt = originalTime ? editing.occurred_at : new Date(enteredAt || capturedAt || Date.now()).toISOString();
       const choice = fields.event.value;
       const version = editorVersion;
       if (!editing && !coordinates && navigator.permissions && navigator.geolocation) {
@@ -466,6 +468,7 @@ $("backdate").addEventListener("click", () => {
 function openPanel(id) {
   const panel = $(id);
   if (panel.open) return;
+  if (recordingBusy && !$("compose").open) return;
   panel.showModal();
   if (id === "compose") editor.elements.text.focus();
   if (id === "search") $("search-text").focus();
@@ -490,6 +493,7 @@ $("compose").addEventListener("cancel", (event) => {
   closePanel("compose");
 });
 $("write").addEventListener("click", () => openPanel("compose"));
+$("quick-write").addEventListener("click", () => openPanel("compose"));
 $("retry-day").addEventListener("click", loadDay);
 $("share-form").addEventListener("change", updateShareSelection);
 function renderMonth(date) {
@@ -602,23 +606,34 @@ $("share-form").addEventListener("submit", (event) => {
   }).finally(updateShareSelection);
 });
 
-$("record").addEventListener("click", async () => {
+async function toggleRecording(event) {
+  const control = event.currentTarget;
+  const quick = control.id === "voice-drop";
+  const status = $("voice-status");
+  const setStatus = (message) => {
+    if (quick) {
+      status.textContent = message;
+      control.setAttribute("aria-label", message);
+    } else {
+      control.textContent = message;
+    }
+  };
   if (recorder?.state === "recording") {
     recorder.stop();
     return;
   }
   if (recordingBusy) return;
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-    notice("当前浏览器无法录音，请检查设备与安全连接。");
+    if (quick) setStatus("当前浏览器无法录音，可改用文字记录。");
+    else editorStatus("当前浏览器无法录音。", true);
     return;
   }
-  const control = $("record");
   const version = editorVersion;
   let stream;
   let stopTimer;
   recordingBusy = true;
   control.disabled = true;
-  notice();
+  setStatus("正在开启麦克风…");
   try {
     stream = await navigator.mediaDevices.getUserMedia({audio: true});
     recorder = new MediaRecorder(stream);
@@ -629,8 +644,9 @@ $("record").addEventListener("click", async () => {
       clearTimeout(stopTimer);
       stream.getTracks().forEach((track) => track.stop());
       control.setAttribute("aria-pressed", "false");
-      control.textContent = "正在转写…";
-      run(control, async () => {
+      setStatus("正在转写…");
+      control.disabled = true;
+      void (async () => {
         try {
           if (editorVersion !== version) return;
           const type = recorder.mimeType || chunks[0]?.type;
@@ -638,7 +654,7 @@ $("record").addEventListener("click", async () => {
           const audio = new Blob(chunks, {type});
           if (!audio.size) throw new Error("没有录到声音，请重试。");
           if (audio.size > 20 * 1024 * 1024) throw new Error(errorMessages.audio_too_large);
-          control.textContent = "正在上传…";
+          setStatus("正在上传…");
           const upload = await api("integrations/audio-upload/", {method: "POST", body: {extension}});
           const body = new FormData();
           body.append("key", upload.key);
@@ -646,35 +662,56 @@ $("record").addEventListener("click", async () => {
           body.append("file", audio, "drop." + extension);
           const response = await fetch(upload.url, {method: "POST", body, signal: AbortSignal.timeout(60000)});
           if (!response.ok) throw new Error("录音上传失败，请重试。");
-          control.textContent = "正在转写…";
+          setStatus("正在转写…");
           const {text} = await api("integrations/transcribe/", {method: "POST", body: {ticket: upload.ticket}});
           if (editorVersion !== version) return;
           if (!text?.trim()) throw new Error("未识别到文字。");
           const input = editor.elements.text;
           input.value = [input.value, text].filter(Boolean).join("\n");
           syncDraftWarning();
+          if (quick) {
+            recordingBusy = false;
+            openPanel("compose");
+          }
           input.focus();
+        } catch (error) {
+          if (quick) status.textContent = error.message;
+          else editorStatus(error.message, true);
         } finally {
           recordingBusy = false;
           recorder = null;
-          control.textContent = "语音转文字";
+          control.disabled = false;
+          if (quick) {
+            control.setAttribute("aria-label", "开始录音");
+            if ($("compose").open) status.textContent = "轻点水滴，记下此刻";
+          } else setStatus("语音转文字");
         }
-      });
+      })();
     }, {once: true});
     recorder.start();
+    if (quick) capturedAt = Date.now();
     stopTimer = setTimeout(() => {
       if (recorder?.state === "recording") recorder.stop();
     }, 60000);
     control.setAttribute("aria-pressed", "true");
-    control.textContent = "停止录音";
+    setStatus("停止录音");
     control.disabled = false;
   } catch {
     stream?.getTracks().forEach((track) => track.stop());
     recordingBusy = false;
     control.disabled = false;
-    notice("无法开始录音，请检查麦克风权限。");
+    if (quick) {
+      status.textContent = "无法开始录音，请检查麦克风权限。";
+      control.setAttribute("aria-label", "重试录音");
+    } else {
+      setStatus("语音转文字");
+      editorStatus("无法开始录音，请检查麦克风权限。", true);
+    }
   }
-});
+}
+
+$("record").addEventListener("click", toggleRecording);
+$("voice-drop").addEventListener("click", toggleRecording);
 
 $("logout").addEventListener("click", () => {
   if (!confirmDiscard()) return;
