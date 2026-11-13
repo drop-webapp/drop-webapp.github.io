@@ -2,155 +2,131 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="referrer" content="no-referrer">
-  <meta name="theme-color" content="#f4eff9">
+  <meta name="theme-color" content="#f7f5f8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#201e27" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="一滴">
   <link rel="icon" type="image/png" href="./drop-icon.png?v=5ad550d3fba9">
-  <title>一滴 Drop</title>
-  <link rel="stylesheet" href="./journal.css?v=30016cca7c6b">
-  <script src="./journal.js?v=5e85d275d88f" defer></script>
+  <link rel="apple-touch-icon" href="./drop-icon.png?v=5ad550d3fba9">
+  <link rel="manifest" href="./app.webmanifest?v=a35e87020689">
+  <title>一滴 · 留住此刻</title>
+  <link rel="stylesheet" href="./journal.css?v=589ae522dcf8">
+  <script src="./drafts.js?v=3ba71d291b54" defer></script>
+  <script src="./audio.js?v=dcb668d0d077" defer></script>
+  <script src="./journal.js?v=35871f9794e4" defer></script>
 </head>
 <body data-api-origin="https://api.drop.jyonn.space" data-share-token="">
-  <header class="masthead wrap">
-    <a class="brand" href="/"><img src="./drop-icon.png?v=5ad550d3fba9" width="32" height="32" alt="">一滴 <span lang="en">Drop</span></a>
-    <span id="identity"></span>
-    <a id="grants" class="quiet" href="https://api.drop.jyonn.space/oauth/grants/" hidden>应用授权</a>
-    <button id="logout" class="quiet" type="button" hidden>退出</button>
+  <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-write" viewBox="0 0 24 24"><path d="m15 5 4 4M4 20l5-1L20 8a2.8 2.8 0 0 0-4-4L5 15l-1 5Z"/><path d="M13 20h7"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 6v15M3 4c4-1 6 0 9 2 3-2 5-3 9-2v15c-4-1-6 0-9 2-3-2-5-3-9-2V4Z"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M6 11v1a6 6 0 0 0 12 0v-1M12 18v3m-3 0h6"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="m14 5-7 7 7 7"/></symbol>
+    <symbol id="i-next" viewBox="0 0 24 24"><path d="m10 5 7 7-7 7"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4m10-4v4M3 11h18m-13 4h2m4 0h2"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 16V3m-4 4 4-4 4 4M7 10H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-2"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M19 10c0 6-7 11-7 11S5 16 5 10a7 7 0 0 1 14 0Z"/><circle cx="12" cy="10" r="2"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m9 5 10 7-10 7V5Z"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/></symbol>
+  </svg>
+  <header class="masthead">
+    <a class="brand" href="/" aria-label="一滴，首页">一滴<span lang="en">drop</span></a>
+    <button id="account-button" class="avatar-button" type="button" data-open="account" aria-label="我的一滴" hidden><svg class="icon" aria-hidden="true"><use href="#i-user"/></svg></button>
   </header>
-  <main class="wrap">
-    <p id="notice" role="status" hidden></p>
+  <div id="network-state" class="network-state" role="status" hidden>暂时离线，写下的话会保留为本机草稿</div>
+  <main>
+    <section id="loading" class="opening-state" aria-live="polite"><span class="loading-pearl" aria-hidden="true"></span><p id="loading-text">正在打开你的一滴…</p><button id="retry-session" type="button" hidden>重新连接</button></section>
     <section id="guest" class="guest" hidden>
-      <h1>把今天<br>留下一滴。</h1>
-      <p>随手记下此刻，日后按天回看。</p>
-      <a class="primary" href="https://api.drop.jyonn.space/api/integrations/frienden/login/">使用 Frienden 登录</a>
-      <button class="quiet" id="dev-login" type="button" hidden>本地开发登录</button>
+      <p class="eyebrow">一个只属于你的角落</p>
+      <h1>给自己，<br>一点留白。</h1>
+      <img class="guest-drop" src="./drop-icon.png?v=5ad550d3fba9" width="200" height="200" alt="一滴淡紫色的水滴">
+      <p class="guest-copy">说一句，或写几行。<br>那些微小的时刻，都可以留在这里。</p>
+      <a class="primary" href="https://api.drop.jyonn.space/api/integrations/frienden/login/">用友间 Frienden 登录 <svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></a>
+      <button class="quiet" id="dev-login" type="button" hidden>本地体验</button>
+      <p class="privacy-line"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>默认仅自己可见，分享由你决定</p>
     </section>
     <section id="journal" hidden>
-      <div class="voice-home">
-        <button type="button" id="voice-drop" aria-label="开始录音" aria-describedby="voice-status" aria-pressed="false">
-          <img src="./drop-icon.png?v=5ad550d3fba9" width="256" height="256" alt="">
-        </button>
-        <p id="voice-status" role="status">轻点水滴，记下此刻</p>
-        <div class="voice-secondary">
-          <button type="button" class="quiet" id="quick-write">写文字</button>
-          <button type="button" class="quiet" data-open="history">回顾</button>
+      <div class="voice-home" data-state="idle">
+        <div class="home-heading"><p id="home-date" class="eyebrow"></p><h1 id="home-title">今天，想留下什么？</h1><p id="home-caption">不用组织语言，想到什么就说什么。</p></div>
+        <div class="drop-scene">
+          <span class="water-rings" aria-hidden="true"></span>
+          <button type="button" id="voice-drop" aria-label="开始语音记录" aria-describedby="voice-hint" aria-pressed="false"><img src="./drop-icon.png?v=5ad550d3fba9" width="256" height="256" alt=""><span class="drop-stop" aria-hidden="true"></span></button>
+        </div>
+        <div class="voice-feedback">
+          <div id="recording-meter" class="recording-meter" hidden><span class="sound-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><time id="recording-time">0:00</time><span class="recording-limit">/ 1:00</span></div>
+          <p id="voice-status" role="status">轻点水滴，记下此刻</p><p id="voice-hint" class="supporting">每段最多一分钟，说完再轻点一下</p>
+        </div>
+        <div id="recording-actions" class="voice-secondary" hidden><button type="button" class="quiet" id="cancel-recording">取消</button><button type="button" class="soft" id="pause-recording"><svg class="icon" aria-hidden="true"><use href="#i-pause"/></svg><span>暂停一下</span></button></div>
+        <div id="voice-recovery" class="voice-secondary" hidden><button type="button" class="quiet" id="voice-later">稍后再写</button><button type="button" class="soft" id="voice-retry">重新转写</button></div>
+        <div id="home-actions" class="home-actions"><button type="button" class="home-action" id="quick-write"><svg class="icon" aria-hidden="true"><use href="#i-write"/></svg>写几句</button><span class="action-divider" aria-hidden="true"></span><button type="button" class="home-action" data-open="history"><svg class="icon" aria-hidden="true"><use href="#i-book"/></svg>回看</button></div>
+        <div class="home-keepsakes">
+          <button id="draft-resume" class="draft-resume" type="button" data-open="drafts" hidden><span class="draft-dot" aria-hidden="true"></span><span id="draft-label"></span><svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></button>
+          <button id="last-entry" class="last-entry" type="button" hidden><span id="last-entry-label" class="eyebrow"></span><span id="last-entry-text"></span><svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></button>
+          <p id="home-privacy" class="privacy-line"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>这些时刻，先留给自己</p>
         </div>
       </div>
-      <dialog id="history" class="panel drawer" aria-labelledby="day-title">
-        <header class="panel-header"><button type="button" data-close="history">关闭</button></header>
-      <div class="spread">
-        <section class="recall" aria-labelledby="day-title">
-          <div class="date-row">
-            <h1 id="day-title"></h1>
-            <span id="year"></span>
-          </div>
-          <nav class="date-tools" aria-label="选择回顾日期">
-            <button type="button" id="prev" aria-label="前一天">←</button>
-            <input type="hidden" id="date"><button type="button" id="open-date" aria-expanded="false" aria-controls="date-panel">选日期</button>
-            <button type="button" id="next" aria-label="后一天">→</button>
-            <button type="button" id="today" class="quiet">回到今天</button>
-            <button type="button" id="write" class="primary">写一条</button>
-            <button type="button" data-open="search">搜索</button>
-            <button type="button" data-open="calendar">日程</button>
-            <button type="button" data-open="share">分享<span id="share-badge"></span></button>
-          </nav>
-          <section id="date-panel" class="date-panel" aria-label="选择日期" hidden>
-            <div class="date-tools"><button id="prev-month" aria-label="上个月">‹</button><strong id="month-label" aria-live="polite"></strong><button id="next-month" aria-label="下个月">›</button></div>
-            <div class="month-grid" id="month-days"></div>
-          </section>
-          <div id="daily-view">
-          <p id="entry-state" role="status"></p>
-          <button type="button" id="retry-day" class="quiet" hidden>重新载入</button>
-          <div class="waterfall" id="entries"></div>
-
-          </div>
-        </section>
-      </div>
-      </dialog>
     </section>
-<dialog id="compose" class="panel sheet" aria-labelledby="capture-title">
-<header class="panel-header"><h2 id="capture-title">写日记</h2><button type="button" data-close="compose">关闭</button></header>
-        <section class="capture" aria-label="编辑器">
-
-          <form id="editor">
-            <fieldset id="editor-controls" class="editor-controls" aria-label="日记内容">
-              <label class="sr-only" for="text">记录正文</label>
-              <textarea id="text" name="text" rows="5" placeholder="此刻想记下什么？" required></textarea>
-              <div class="capture-tools">
-                <button class="quiet" type="button" id="record" aria-pressed="false">语音转文字</button>
-                <button class="quiet" type="button" id="locate">记录位置</button>
-              </div>
-              <button type="button" class="quiet" id="backdate" hidden></button>
-              <details id="details">
-                <summary>记录详情</summary>
-                <div class="fields">
-                  <input type="hidden" name="occurred_at"><output id="capture-time"></output>
-                  <input type="hidden" name="city">
-                  <input type="hidden" name="place">
-                  <label hidden>关联日程<select name="event"><option value="">无</option></select></label>
-                  <div id="event-options" role="group" aria-label="关联日程"></div>
-                  <output id="coordinates"></output>
-                  <button type="button" id="clear-location" class="quiet" hidden>移除坐标</button>
-                </div>
-              </details>
-              <div class="capture-actions">
-                <button class="primary" type="submit" id="save">记一滴</button>
-                <button class="quiet" type="button" id="cancel" hidden>取消编辑</button>
-              </div>
-            </fieldset>
-            <p id="editor-status" role="status"></p>
-          </form>
-        </section>
-
-</dialog>
-<dialog id="search" class="panel drawer" aria-labelledby="search-title">
-<header class="panel-header"><h2 id="search-title">搜索日记</h2><button type="button" data-close="search">关闭</button></header>
-<p class="panel-status" role="status"></p>
-          <form id="search-form" class="date-tools" role="search">
-            <label class="sr-only" for="search-text">搜索日记</label>
-            <input id="search-text" type="search" maxlength="120" placeholder="搜索正文、地点或日程" required>
-            <button type="submit">搜索</button>
-          </form>
-          <p id="search-status" role="status"></p>
-          <div id="search-results"></div>
-
-</dialog>
-<dialog id="calendar" class="panel sheet" aria-labelledby="calendar-title">
-<header class="panel-header"><h2 id="calendar-title">当天日程</h2><button type="button" data-close="calendar">关闭</button></header>
-<p class="panel-status" role="status"></p>
-          <div id="events"></div>
-            <button type="button" id="archive" hidden>归档所选日程</button>
-
-
-</dialog>
-<dialog id="share" class="panel drawer" aria-labelledby="share-title">
-<header class="panel-header"><h2 id="share-title">分享与链接管理</h2><button type="button" data-close="share">关闭</button></header>
-<p class="panel-status" role="status"></p>
-
-            <p id="share-count" role="status"></p>
-            <p>勾选当天要分享的记录，再选择接收方可见的字段。</p>
-            <form id="share-form">
-              <fieldset><legend>可见字段</legend>
-                <label><input type="checkbox" name="fields" value="text" checked> 正文</label>
-                <label><input type="checkbox" name="fields" value="occurred_at"> 时间</label>
-                <label><input type="checkbox" name="fields" value="city"> 城市</label>
-                <label><input type="checkbox" name="fields" value="place"> 地点</label>
-                <label><input type="checkbox" name="fields" value="latitude"> 纬度</label>
-                <label><input type="checkbox" name="fields" value="longitude"> 经度</label>
-                <label><input type="checkbox" name="fields" value="event"> 日程</label>
-              </fieldset>
-              <fieldset><legend>有效期</legend><label><input type="radio" name="expires_in" value="3600"> 1 小时</label><label><input type="radio" name="expires_in" value="86400" checked> 1 天</label><label><input type="radio" name="expires_in" value="604800"> 7 天</label></fieldset>
-              <button type="submit" id="create-share" disabled>创建链接</button>
-            </form>
-            <div id="share-result"></div>
-            <div id="links"></div>
-
-</dialog>
-    <section id="public" class="public" hidden>
-      <h1>分享的记录</h1>
-      <p id="public-state" role="status"></p>
-      <div class="waterfall" id="public-entries"></div>
-    </section>
+    <section id="public" class="public" hidden><p class="eyebrow">有人想把这一刻分享给你</p><h1>一滴，生活的片刻。</h1><p id="public-state" role="status"></p><div id="public-entries" class="timeline"></div></section>
   </main>
+  <div id="notice" class="toast" role="status" hidden><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span></span><button class="icon-button" type="button" id="dismiss-notice" aria-label="关闭提示"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></div>
+
+  <dialog id="history" class="panel journal-panel" aria-labelledby="history-title">
+    <header class="panel-header"><button type="button" class="icon-button" data-back aria-label="返回"><svg class="icon" aria-hidden="true"><use href="#i-back"/></svg></button><h2 id="history-title" tabindex="-1">回看</h2><button type="button" class="icon-button" data-open="search" aria-label="搜索日记"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg></button></header>
+    <div class="panel-body">
+      <div class="day-heading"><button type="button" class="date-heading" id="open-date" aria-expanded="false" aria-controls="date-panel"><span id="day-title"></span><svg class="icon" aria-hidden="true"><use href="#i-down"/></svg><span id="day-subtitle"></span></button><button id="today" class="soft" type="button" hidden>今天</button></div>
+      <input type="hidden" id="date">
+      <section id="date-panel" class="date-panel" aria-label="选择日期" hidden><div class="month-heading"><button id="prev-month" type="button" class="icon-button" aria-label="上个月"><svg class="icon" aria-hidden="true"><use href="#i-back"/></svg></button><strong id="month-label" aria-live="polite"></strong><button id="next-month" type="button" class="icon-button" aria-label="下个月"><svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></button></div><div class="month-grid" id="month-days"></div><p class="calendar-legend">日期下的小点，是你留下的时刻</p><p id="month-status" role="status"></p></section>
+      <nav class="week-navigation" aria-label="选择回顾日期"><button type="button" id="prev" class="icon-button" aria-label="前一周"><svg class="icon" aria-hidden="true"><use href="#i-back"/></svg></button><div id="week-days" class="week-days"></div><button type="button" id="next" class="icon-button" aria-label="后一周"><svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></button></nav>
+      <div class="day-tools"><p id="entry-state" role="status"></p><button type="button" class="quiet compact" data-open="day-options" aria-label="这一天的日程与分享"><svg class="icon" aria-hidden="true"><use href="#i-more"/></svg></button></div>
+      <div id="entries" class="timeline" aria-busy="false"></div>
+      <div id="empty-day" class="empty-state" hidden><svg class="empty-icon icon" aria-hidden="true"><use href="#i-book"/></svg><h3>留白，也是一天。</h3><p>不必每天写满。想起什么时，再留下一点。</p><button id="write-day" class="soft" type="button">为这一天写几句</button><button id="latest-day" class="quiet" type="button" hidden>看看上次留下的</button></div>
+      <button type="button" id="retry-day" class="soft" hidden>重新读取这一天</button>
+      <p class="panel-status" role="status"></p>
+    </div>
+    <footer class="panel-footer history-footer"><button type="button" id="write" class="quiet"><svg class="icon" aria-hidden="true"><use href="#i-write"/></svg>写几句</button><button type="button" id="history-record" class="primary"><svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg>记下此刻</button></footer>
+  </dialog>
+
+  <dialog id="compose" class="panel compose-panel" aria-labelledby="capture-title">
+    <header class="panel-header"><button type="button" class="quiet" data-back>收起</button><h2 id="capture-title" tabindex="-1">写几句</h2><button type="button" id="discard-draft" class="icon-button" aria-label="删除这份草稿"><svg class="icon" aria-hidden="true"><use href="#i-trash"/></svg></button></header>
+    <form id="editor" class="editor">
+      <div class="panel-body compose-body">
+        <p id="capture-context" class="capture-context"></p>
+        <div id="audio-preview" class="audio-preview" hidden><button type="button" id="audio-play" class="icon-button" aria-label="播放这段录音"><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg></button><div class="audio-track"><span>听听刚才的声音</span><input type="range" id="audio-seek" min="0" max="100" value="0" aria-label="录音播放进度"></div><time id="audio-duration">0:00</time></div>
+        <p id="audio-note" class="supporting" hidden>声音暂存在这份草稿中，保存后留下文字。</p>
+        <div id="draft-transcription" class="inline-recovery" hidden><p id="draft-transcription-status"></p><button id="retry-transcription" type="button" class="soft">重新转写</button></div>
+        <label class="sr-only" for="text">日记正文</label><textarea id="text" name="text" placeholder="从此刻想到的第一句话开始…" rows="7" spellcheck="false"></textarea>
+        <div class="capture-tools"><button type="button" id="record" class="quiet"><svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg>接着说</button><button type="button" id="capture-details" class="quiet" aria-expanded="false" aria-controls="details"><svg class="icon" aria-hidden="true"><use href="#i-more"/></svg>这一刻</button></div>
+        <section id="details" class="capture-details" hidden><p id="capture-time"></p><button type="button" id="backdate" class="quiet" hidden></button><div class="location-row"><svg class="icon" aria-hidden="true"><use href="#i-pin"/></svg><span id="coordinates">未附位置</span><button type="button" id="locate" class="quiet">附上位置</button><button type="button" id="clear-location" class="quiet" hidden>移除</button></div><p class="supporting">时间自动留下；位置由你决定，授权后可自动附上。</p><p id="event-label" class="supporting" hidden>关联日程</p><div id="event-options" class="event-options"></div></section>
+      </div>
+      <footer class="panel-footer compose-footer"><p id="editor-status" role="status">仅自己可见</p><button class="primary" type="submit" id="save"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>留下这一滴</span></button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="read" class="panel read-panel" aria-labelledby="read-title"><header class="panel-header"><button type="button" class="icon-button" data-back aria-label="返回"><svg class="icon" aria-hidden="true"><use href="#i-back"/></svg></button><h2 id="read-title" tabindex="-1">那一刻</h2><button type="button" id="read-share" class="icon-button" aria-label="分享这条记录"><svg class="icon" aria-hidden="true"><use href="#i-share"/></svg></button></header><div class="panel-body"><p id="read-date" class="eyebrow"></p><div id="read-content" class="read-content"></div><div id="read-meta" class="read-meta"></div><p class="private-note"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>仅自己可见 · 创建分享后，接收方可见所选内容</p><p class="panel-status" role="status"></p><div class="reader-extras"><button id="view-day" type="button" class="quiet">查看这一天</button><button id="read-delete" type="button" class="quiet destructive">删除记录</button></div></div><footer class="panel-footer"><button id="read-edit" type="button" class="primary"><svg class="icon" aria-hidden="true"><use href="#i-write"/></svg>再写一点</button></footer></dialog>
+
+  <dialog id="search" class="panel journal-panel" aria-labelledby="search-title"><header class="panel-header"><button type="button" class="icon-button" data-back aria-label="返回"><svg class="icon" aria-hidden="true"><use href="#i-back"/></svg></button><h2 id="search-title" tabindex="-1">找回一个片刻</h2><span class="header-spacer"></span></header><div class="panel-body"><form id="search-form" class="search-form" role="search"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><label class="sr-only" for="search-text">搜索正文、地点或日程</label><input id="search-text" type="search" maxlength="120" placeholder="一个词，一处地方，一段日程" enterkeyhint="search" autocomplete="off"><button id="clear-search" class="icon-button" type="button" aria-label="清空搜索" hidden><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></form><p id="search-status" class="supporting" role="status">记得的一个词，也能找到那一天。</p><div id="search-results" class="timeline"></div><p class="panel-status" role="status"></p></div></dialog>
+
+  <dialog id="day-options" class="panel small-panel" aria-labelledby="day-options-title"><header class="panel-header"><h2 id="day-options-title" tabindex="-1">这一天</h2><button class="icon-button" type="button" data-back aria-label="返回"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></header><div class="panel-body menu-list"><button type="button" data-open="calendar"><svg class="icon" aria-hidden="true"><use href="#i-calendar"/></svg><span>看看当天日程<small>把日程和感受放在一起</small></span><svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></button><button type="button" data-open="share"><svg class="icon" aria-hidden="true"><use href="#i-share"/></svg><span>分享一些片刻<small>选哪些、让谁看，由你决定</small></span><svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></button></div></dialog>
+
+  <dialog id="calendar" class="panel" aria-labelledby="calendar-title"><header class="panel-header"><button type="button" class="icon-button" data-back aria-label="返回"><svg class="icon" aria-hidden="true"><use href="#i-back"/></svg></button><h2 id="calendar-title" tabindex="-1">这一天的日程</h2><span class="header-spacer"></span></header><div class="panel-body"><p id="calendar-date" class="eyebrow"></p><p class="supporting">日程记着发生了什么，你可以再留下一点感受。</p><div id="events"></div><p class="panel-status" role="status"></p></div><footer id="archive-footer" class="panel-footer" hidden><button type="button" id="archive" class="primary" disabled>把所选日程留在日记里</button></footer></dialog>
+
+  <dialog id="share" class="panel" aria-labelledby="share-title"><header class="panel-header"><button type="button" class="icon-button" data-back aria-label="返回"><svg class="icon" aria-hidden="true"><use href="#i-back"/></svg></button><h2 id="share-title" tabindex="-1">分享一些片刻</h2><button type="button" class="quiet" data-open="links">已分享</button></header><form id="share-form" class="editor"><div class="panel-body"><p class="supporting">只有你选中的记录和内容，会出现在链接里。</p><div class="section-heading"><h3>想分享哪些</h3><button id="select-all" type="button" class="quiet">全选</button></div><div id="share-entries" class="share-entries"></div><fieldset><legend>对方能看到</legend><div class="field-options"><label><input type="checkbox" name="fields" value="text" checked><span>正文</span></label><label><input type="checkbox" name="fields" value="occurred_at"><span>时间</span></label><label><input type="checkbox" name="fields" value="city"><span>城市</span></label><label><input type="checkbox" name="fields" value="place"><span>地点</span></label><label><input type="checkbox" name="fields" value="coordinates"><span>精确坐标</span></label><label><input type="checkbox" name="fields" value="event"><span>日程</span></label></div></fieldset><fieldset><legend>链接有效期</legend><div class="field-options"><label><input type="radio" name="expires_in" value="3600"><span>1 小时</span></label><label><input type="radio" name="expires_in" value="86400" checked><span>1 天</span></label><label><input type="radio" name="expires_in" value="604800"><span>7 天</span></label></div></fieldset><p class="supporting">持有链接的人可查看所选内容的最新版本。你可以随时撤销。</p><p class="panel-status" role="status"></p><div id="share-result"></div></div><footer class="panel-footer"><span id="share-count" class="supporting">还没有选择记录</span><button type="submit" id="create-share" class="primary" disabled>创建分享链接</button></footer></form></dialog>
+
+  <dialog id="links" class="panel" aria-labelledby="links-title"><header class="panel-header"><button type="button" class="icon-button" data-back aria-label="返回"><svg class="icon" aria-hidden="true"><use href="#i-back"/></svg></button><h2 id="links-title" tabindex="-1">分享过的片刻</h2><span class="header-spacer"></span></header><div class="panel-body"><p class="supporting">撤销后，原来的链接会立即失效。</p><div id="links-list"></div><p class="panel-status" role="status"></p></div></dialog>
+
+  <dialog id="drafts" class="panel" aria-labelledby="drafts-title"><header class="panel-header"><button type="button" class="icon-button" data-back aria-label="返回"><svg class="icon" aria-hidden="true"><use href="#i-back"/></svg></button><h2 id="drafts-title" tabindex="-1">还没写完的</h2><span class="header-spacer"></span></header><div class="panel-body"><p class="supporting">不着急，想到哪里就写到哪里。草稿仅在这个浏览器保存。</p><div id="draft-list" class="draft-list"></div><p class="panel-status" role="status"></p></div></dialog>
+
+  <dialog id="account" class="panel" aria-labelledby="account-title"><header class="panel-header"><h2 id="account-title" tabindex="-1">我的一滴</h2><button type="button" class="icon-button" data-back aria-label="关闭"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></header><div class="panel-body"><div id="identity" class="identity"></div><p class="account-intro">生活不必写成文章。<br>一点声音，几句话，就很好。</p><div class="menu-list"><button type="button" data-open="drafts"><svg class="icon" aria-hidden="true"><use href="#i-write"/></svg><span>本机草稿</span><svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></button><button type="button" data-open="calendar"><svg class="icon" aria-hidden="true"><use href="#i-calendar"/></svg><span>Chronelle 日程<small>只读取你授权的分组</small></span><svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></button><button type="button" data-open="links"><svg class="icon" aria-hidden="true"><use href="#i-share"/></svg><span>分享链接</span><svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></button><a id="grants" href="https://api.drop.jyonn.space/oauth/grants/"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg><span>应用授权</span><svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></a></div><label class="setting-toggle"><span>自动附上位置<small>仅在记录时读取，需要浏览器允许</small></span><input id="auto-location" type="checkbox" role="switch"></label><p id="location-setting-status" class="supporting" role="status"></p><p class="supporting">记录默认私密。语音会通过七牛转成文字；转写完成后，云端临时录音会删除。</p><button id="logout" class="quiet destructive" type="button">退出登录</button><p class="panel-status" role="status"></p></div></dialog>
+
+  <dialog id="confirm" class="panel confirmation" aria-labelledby="confirm-title" aria-describedby="confirm-copy"><div class="panel-body"><h2 id="confirm-title" tabindex="-1"></h2><p id="confirm-copy"></p><p class="panel-status" role="status"></p><div class="confirmation-actions"><button type="button" class="soft" id="confirm-cancel">保留</button><button type="button" class="danger-button" id="confirm-accept">删除</button></div></div></dialog>
 </body>
 </html>

@@ -2,775 +2,1155 @@
 
 const $ = (id) => document.getElementById(id);
 const apiOrigin = document.body.dataset.apiOrigin || "";
-let csrfToken;
-const editor = $("editor");
-const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-const dayFormatter = new Intl.DateTimeFormat("zh-CN", {month: "long", day: "numeric", weekday: "short"});
-const timeFormatter = new Intl.DateTimeFormat("zh-CN", {hour: "2-digit", minute: "2-digit"});
+const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+const clockFormat = new Intl.DateTimeFormat("zh-CN", {hour: "2-digit", minute: "2-digit"});
+const dayFormat = new Intl.DateTimeFormat("zh-CN", {month: "long", day: "numeric"});
+const weekdayFormat = new Intl.DateTimeFormat("zh-CN", {weekday: "long"});
 const selected = new Set();
-const errorMessages = {
-  authentication_required: "请重新登录。",
-  calendar_connect_required: "请连接 Chronelle，选择可读取的日程分组。",
-  calendar_not_configured: "日程服务尚未配置。",
-  calendar_access_denied: "当前账号无法读取日程。",
-  invalid_date_or_timezone: "无法识别所选日期或时区。",
-  calendar_provider_error: "暂时无法读取日程，请稍后重试。",
-  transcription_not_configured: "语音转写尚未配置。",
-  audio_required: "没有收到录音，请重试。",
-  audio_too_large: "录音文件过大，请缩短录音。",
-  transcription_provider_error: "语音转写失败，请稍后重试。",
+const drafts = new Map();
+const entryCache = new Map();
+const monthCache = new Map();
+const scene = document.querySelector(".voice-home");
+let session, csrfToken, store, currentDraft = null, currentEntry = null;
+let dayEntries = [], dayEvents = [], latestDate = null, lastEntry = null, shareContextEntry = null;
+let currentPanel = null, panelTrail = [], panelOpener = null, confirmResolve;
+let dayVersion = 0, monthVersion = 0, searchVersion = 0, homeVersion = 0, calendarVersion = 0;
+let shownMonth, saving = false, draftWrite = Promise.resolve(), toastTimer, searchTimer;
+const draftTimers = new Map();
+let pendingWrites = 0, closingPanel = false, signingOut = false, startingVoice = false;
+let voiceState = "idle", capture = null, pendingVoice = null, voiceProcess = 0, audioPlayer = null, audioURL = null;
+let autoLocation = true, locationVersion = 0, sessionExpired = false;
+const localFailures = new Set();
+const panelHistoryKey = "drop-" + Date.now();
+let skipPanelPop = false;
+if (history.state?.dropPanel) history.replaceState(null, "", location.href);
+const errors = {
+  authentication_required: "登录已过期，草稿还在。重新登录后就能保存。",
+  calendar_connect_required: "连接 Chronelle 后，可以把日程和感受放在一起。",
+  calendar_not_configured: "日程连接暂时不可用，请稍后再试。",
+  calendar_access_denied: "需要重新选择允许读取的日程分组。",
+  calendar_provider_error: "暂时读不到日程，稍后再试一次。",
+  transcription_not_configured: "语音转写暂时不可用，录音仍在草稿里。",
+  transcription_provider_error: "这次没能转成文字，录音还在，可以再试一次。",
+  audio_required: "没有收到录音，请再说一次。",
+  audio_too_large: "这一段有些长，请分成短一点的片刻。",
+  "Sign in required.": "登录已过期，草稿还在。重新登录后就能保存。",
+  "Entry not found.": "这条记录已被删除。",
+  account_changed: "这个浏览器已切换账号。为保护日记，请刷新后继续；原账号草稿仍保留在本机。",
 };
-let dayEvents = [];
-let archivedEvents = [];
-let editing = null;
-let coordinates = null;
-let editorVersion = 0;
-let loadVersion = 0;
-let recorder = null;
-let recordingBusy = false;
-let capturedAt = null;
-let saving = false;
-let shownMonth;
-let searchVersion = 0;
-let editorBaseline = editorSnapshot();
-let unloadWarning = false;
 
-function editorSnapshot() {
-  return JSON.stringify([
-    ...["text", "occurred_at", "city", "place", "event"].map((name) => editor.elements[name].value),
-    coordinates,
-  ]);
+function node(tag, text, className) {
+  const el = document.createElement(tag);
+  if (text !== undefined) el.textContent = text;
+  if (className) el.className = className;
+  return el;
 }
-
-function preventDraftLoss(event) {
-  event.preventDefault();
-  event.returnValue = true;
+function icon(name) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.classList.add("icon"); svg.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS(svg.namespaceURI, "use");
+  use.setAttribute("href", "#i-" + name); svg.append(use); return svg;
 }
-
-function syncDraftWarning() {
-  const dirty = saving || editorSnapshot() !== editorBaseline;
-  if (dirty === unloadWarning) return;
-  unloadWarning = dirty;
-  if (dirty) window.addEventListener("beforeunload", preventDraftLoss);
-  else window.removeEventListener("beforeunload", preventDraftLoss);
+function button(text, action, className = "quiet") {
+  const el = node("button", text, className); el.type = "button";
+  el.addEventListener("click", () => action(el)); return el;
 }
-
-function confirmDiscard() {
-  return !saving && (editorSnapshot() === editorBaseline || window.confirm("放弃未保存的修改？"));
-}
-
-function editorStatus(message = "", failed = false) {
-  const status = $("editor-status");
-  status.textContent = message;
-  status.classList.toggle("destructive", failed);
-}
-
-function element(tag, value, className) {
-  const node = document.createElement(tag);
-  if (value !== undefined) node.textContent = value;
-  if (className) node.className = className;
-  return node;
-}
-
-function button(label, action) {
-  const node = element("button", label, "quiet");
-  node.type = "button";
-  node.addEventListener("click", () => action(node));
-  return node;
-}
-
-function localDateTime(value) {
-  const date = new Date(value);
-  return new Date(date.valueOf() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-}
-
 function dateKey(value = new Date()) {
-  return localDateTime(value).slice(0, 10);
+  const date = new Date(value);
+  return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
 }
+function dayDate(day) { return new Date(day + "T12:00:00"); }
+function shiftDay(day, amount) { const date = dayDate(day); date.setDate(date.getDate() + amount); return dateKey(date); }
+function relativeDay(day) { return day === dateKey() ? "今天" : day === shiftDay(dateKey(), -1) ? "昨天" : dayFormat.format(dayDate(day)); }
+function momentLabel(value) { const date = new Date(value); return relativeDay(dateKey(date)) + " · " + clockFormat.format(date); }
+function durationLabel(seconds) { return Math.floor(seconds / 60) + ":" + String(Math.floor(seconds % 60)).padStart(2, "0"); }
+function uuid() { return crypto.randomUUID ? crypto.randomUUID() : "10000000-1000-4000-8000-100000000000".replace(/[018]/g, c => (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)); }
+function eventName(event) { return typeof event === "string" ? event : event?.title; }
+function message(error) { return error?.message || "暂时没能完成，请再试一次。"; }
 
-function notice(message = "") {
-  $("notice").textContent = message;
-  $("notice").hidden = !message;
-}
-
-async function api(path, {method = "GET", body} = {}) {
+async function api(path, {method = "GET", body, timeout = 25000} = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
   const headers = {Accept: "application/json"};
+  if (session?.user_id) headers["X-Drop-User"] = String(session.user_id);
   if (method !== "GET") {
-    const csrf = document.cookie.split("; ").find((item) => item.startsWith("csrftoken="));
-    if (csrfToken) headers["X-CSRFToken"] = csrfToken;
-    else if (csrf) headers["X-CSRFToken"] = decodeURIComponent(csrf.slice("csrftoken=".length));
+    const cookie = document.cookie.split("; ").find(part => part.startsWith("csrftoken="));
+    if (csrfToken || cookie) headers["X-CSRFToken"] = csrfToken || decodeURIComponent(cookie.slice(10));
   }
-  if (body !== undefined && !(body instanceof FormData)) {
-    headers["Content-Type"] = "application/json";
-    body = JSON.stringify(body);
-  }
-  const response = await fetch(apiOrigin + "/api/" + path, {method, body, headers, credentials: "include"});
-  const result = response.status === 204 ? {} : await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const fallback = {401: "请重新登录。", 403: "当前操作没有权限。", 404: "这项内容已不存在。", 503: "服务暂时不可用。"};
-    const detail = typeof result.error === "string" ? result.error : result.detail;
-    throw new Error(errorMessages[detail] || detail || fallback[response.status] || "请求失败，请重试。");
-  }
-  return result;
+  if (body !== undefined) { headers["Content-Type"] = "application/json"; body = JSON.stringify(body); }
+  try {
+    const response = await fetch(apiOrigin + "/api/" + path, {method, body, headers, credentials: "include", signal: controller.signal});
+    const result = response.status === 204 ? {} : await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const key = result.error || result.detail;
+      const error = new Error(errors[key] || ({401: errors.authentication_required, 403: "暂时无法完成此操作，请刷新后再试。", 404: "这项内容已不存在。", 429: "稍等片刻，再试一次。", 503: "服务暂时没有回应，稍后再试。"})[response.status] || "暂时没能完成，请再试一次。");
+      error.code = key; error.status = response.status;
+      if (response.status === 401 || key === "account_changed") { sessionExpired = true; renderNetwork(); }
+      throw error;
+    }
+    return result;
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error("连接比平时慢，内容仍在。可以稍后重试。");
+    if (error instanceof TypeError) throw new Error("暂时连不上网络，内容仍在。连接恢复后再试。");
+    throw error;
+  } finally { clearTimeout(timer); }
 }
-
+function notice(text) {
+  clearTimeout(toastTimer);
+  if (currentPanel) {
+    const status = $(currentPanel).querySelector(".panel-status");
+    if (status) { status.textContent = text; return; }
+  }
+  $("notice").querySelector("span").textContent = text;
+  $("notice").hidden = !text;
+  if (text) toastTimer = setTimeout(() => { $("notice").hidden = true; }, 7000);
+}
+function editorStatus(text = "", failed = false) {
+  $("editor-status").textContent = text;
+  $("editor-status").classList.toggle("failed", failed);
+}
 async function run(control, action) {
   control.disabled = true;
-  notice();
   const status = control.closest("dialog")?.querySelector(".panel-status");
   if (status) status.textContent = "";
-  try {
-    await action();
-  } catch (error) {
-    const panel = control.closest("dialog");
-    if (panel?.id === "compose") editorStatus(error.message, true);
-    else if (panel) panel.querySelector(".panel-status").textContent = error.message;
-    else notice(error.message);
-  } finally {
-    control.disabled = false;
-  }
+  try { return await action(); }
+  catch (error) { if (status) status.textContent = message(error); else notice(message(error)); }
+  finally { control.disabled = false; }
 }
 
-function eventName(event) {
-  return typeof event === "string" ? event : event?.title;
+// Only one modal surface is presented. Going back restores the previous context.
+function holdPanelHistory() {
+  if (history.state?.dropPanel !== panelHistoryKey) history.pushState({dropPanel: panelHistoryKey}, "", location.href);
 }
-
-function updateShareSelection() {
-  $("share-count").textContent = selected.size ? `已选 ${selected.size} 条` : "";
-  $("share-badge").textContent = selected.size ? ` (${selected.size})` : "";
-  $("create-share").disabled = !selected.size ||
-    !$("share-form").querySelector('input[name="fields"]:checked');
+function releasePanelHistory() {
+  if (history.state?.dropPanel === panelHistoryKey) { skipPanelPop = true; history.back(); }
 }
-
-function renderEntries(target, entries, isPublic = false, isSearch = false) {
-  target.replaceChildren(...entries.map((entry) => {
-    const card = element("article", undefined, "note");
-    if (entry.occurred_at) {
-      const date = new Date(entry.occurred_at);
-      const label = isPublic || isSearch ? date.toLocaleString("zh-CN") : timeFormatter.format(date);
-      const time = element("time", label);
-      time.dateTime = entry.occurred_at;
-      card.append(time);
-    }
-    if (entry.text) card.append(element("p", entry.text));
-    const meta = [entry.city, entry.place, eventName(entry.event)].filter(Boolean);
-    if (entry.latitude != null) meta.push("纬度 " + entry.latitude);
-    if (entry.longitude != null) meta.push("经度 " + entry.longitude);
-    if (meta.length) card.append(element("p", meta.join(" · "), "note-meta"));
-    if (!isPublic) {
-      const actions = element("div", undefined, "note-actions");
-      const remove = button("删除", (control) => {
-        if (saving) return;
-        const message = editing?.id === entry.id && editorSnapshot() !== editorBaseline
-          ? "删除这条记录并放弃未保存的修改？"
-          : "删除这条记录？";
-        if (!window.confirm(message)) return;
-        return run(control, async () => {
-          await api("entries/" + entry.id + "/", {method: "DELETE"});
-          selected.delete(entry.id);
-          updateShareSelection();
-          if (editing?.id === entry.id) resetEditor();
-          if (isSearch) await searchEntries();
-          else await loadDay();
-        });
-      });
-      const label = element("label");
-      const checkbox = element("input");
-      checkbox.type = "checkbox";
-      checkbox.checked = selected.has(entry.id);
-      checkbox.addEventListener("change", () => {
-        if (checkbox.checked) {
-          selected.add(entry.id);
-
-        } else {
-          selected.delete(entry.id);
-        }
-        updateShareSelection();
-      });
-      label.append(checkbox, " 分享");
-      const menu = element("details", undefined, "note-menu");
-      const menuLabel = element("summary", "更多");
-      remove.classList.add("destructive");
-      menu.append(menuLabel, remove);
-      actions.append(button("编辑", () => editEntry(entry)));
-      if (isSearch) actions.append(button("查看当天", () => setDay(dateKey(entry.occurred_at))));
-      else actions.append(label);
-      actions.append(menu);
-      card.append(actions);
-    }
-    return card;
-  }));
-}
-
-function showCoordinates(value) {
-  coordinates = value;
-  syncDraftWarning();
-  $("coordinates").value = value ? value.latitude.toFixed(5) + ", " + value.longitude.toFixed(5) : "";
-  $("clear-location").hidden = !value;
-}
-
-function renderEventOptions(current) {
-  const select = editor.elements.event;
-  const previous = select.eventById?.get(select.value);
-  const chosen = current === undefined ? previous : current;
-  const snapshots = [...dayEvents, ...archivedEvents];
-  if (editing?.event) snapshots.push(editing.event);
-  if (chosen) snapshots.push(chosen);
-  const eventById = new Map(snapshots.map((event) => [event.id, event]));
-  select.replaceChildren(new Option("无", ""), ...[...eventById.values()].map((event) =>
-    new Option(eventName(event) || "未命名日程", event.id)));
-  select.value = chosen?.id || "";
-  select.eventById = eventById;
-  const options = [...select.options];
-  $("event-options").replaceChildren(...options.map((option) => {
-    const control = button(option.textContent, () => {
-      select.value = option.value;
-      renderEventOptions();
-      syncDraftWarning();
-    });
-    control.disabled = select.disabled;
-    control.setAttribute("aria-pressed", String(option.selected));
-    return control;
-  }));
-}
-
-function resetEditor() {
-  editorVersion += 1;
-  editing = null;
-  capturedAt = null;
-  editor.elements.text.required = true;
-  editor.elements.occurred_at.disabled = false;
-  editor.elements.event.disabled = false;
-  editor.reset();
-  showCoordinates(null);
-  renderEventOptions(null);
-  $("capture-time").textContent = "保存时自动记录时间";
-  $("capture-title").textContent = "写日记";
-  $("save").textContent = "记一滴";
-  $("cancel").hidden = true;
-  $("backdate").hidden = !$("date").value || $("date").value >= dateKey();
-  editorBaseline = editorSnapshot();
-  syncDraftWarning();
-}
-
-function editEntry(entry) {
-  if (!confirmDiscard()) return;
-  editorStatus();
-  editorVersion += 1;
-  editing = entry;
-  editor.elements.text.required = !entry.archived;
-  editor.elements.occurred_at.disabled = Boolean(entry.archived);
-  editor.elements.event.disabled = Boolean(entry.archived);
-  editor.elements.text.value = entry.text;
-  editor.elements.occurred_at.value = localDateTime(entry.occurred_at);
-  editor.elements.city.value = entry.city || "";
-  editor.elements.place.value = entry.place || "";
-  const value = entry.latitude != null && entry.longitude != null
-    ? {latitude: Number(entry.latitude), longitude: Number(entry.longitude)}
-    : null;
-  showCoordinates(value);
-  renderEventOptions(entry.event);
-  $("details").open = true;
-  $("capture-time").textContent = new Date(entry.occurred_at).toLocaleString("zh-CN");
-  $("capture-title").textContent = "编辑记录";
-  $("save").textContent = "保存修改";
-  $("cancel").hidden = false;
-  $("backdate").hidden = true;
-  editorBaseline = editorSnapshot();
-  syncDraftWarning();
-  if ($("search").open) $("search").close();
-  openPanel("compose");
-}
-
-async function loadDay() {
-  const version = ++loadVersion;
-  const day = $("date").value;
-  const date = new Date(day + "T12:00:00");
-  $("day-title").textContent = dayFormatter.format(date);
-  $("year").textContent = String(date.getFullYear());
-  $("today").hidden = day === dateKey();
-  $("backdate").hidden = day >= dateKey() || Boolean(editing);
-  $("backdate").textContent = "补记 " + dayFormatter.format(date);
-  $("retry-day").hidden = true;
-  $("entry-state").textContent = "正在读取记录…";
-  $("entries").replaceChildren();
-  $("events").textContent = "正在读取日程…";
-  $("archive").hidden = true;
-  dayEvents = [];
-  archivedEvents = [];
-  renderEventOptions();
-  const query = new URLSearchParams({date: day, tz});
-  await Promise.all([
-    api("entries/?" + query).then(({entries}) => {
-      if (version !== loadVersion) return;
-      archivedEvents = entries.filter((entry) => entry.archived && entry.event).map((entry) => entry.event);
-      renderEventOptions();
-      renderEntries($("entries"), entries);
-      $("entry-state").textContent = entries.length ? entries.length + " 条记录" : "这一天还没有记录。可以写一条，也可以切换日期。";
-    }).catch((error) => {
-      if (version !== loadVersion) return;
-      $("entry-state").textContent = error.message;
-      $("retry-day").hidden = false;
-    }),
-    api("integrations/calendar/?" + query).then(({events}) => {
-      if (version !== loadVersion) return;
-      dayEvents = events;
-      renderEventOptions();
-      renderCalendar(events);
-    }).catch((error) => {
-      if (version !== loadVersion) return;
-      $("events").textContent = error.message;
-      if (error.message === errorMessages.calendar_connect_required) {
-        const connect = element("a", "连接 Chronelle", "primary");
-        connect.href = apiOrigin + "/api/integrations/chronelle/connect/";
-        $("events").append(element("br"), connect);
-      }
-    }),
-  ]);
-}
-
-function renderCalendar(events) {
-  $("events").replaceChildren(...events.map((event, index) => {
-    const label = element("label");
-    const check = element("input");
-    check.type = "checkbox";
-    check.value = index;
-    const time = event.all_day ? "全天" : timeFormatter.format(new Date(event.start));
-    label.append(check, " " + time + " · " + event.title);
-    return label;
-  }));
-  $("archive").hidden = !events.length;
-  if (!events.length) $("events").textContent = "当天没有日程。";
-}
-
-function setDay(day, clearSelection = true) {
-  closeSearch();
-  if (clearSelection) selected.clear();
-  updateShareSelection();
-  $("date").value = day;
-  if (!$("date-panel").hidden) renderMonth(new Date(day + "T12:00:00"));
-  return loadDay();
-}
-
-function moveDay(offset) {
-  const day = new Date($("date").value + "T12:00:00");
-  day.setDate(day.getDate() + offset);
-  return setDay(dateKey(day));
-}
-
-async function refreshLinks() {
-  const {shares} = await api("shares/");
-  $("links").replaceChildren(...shares.map((share) => {
-    const row = element("div");
-    const link = element("a", "打开链接");
-    link.href = share.url;
-    const revoke = button("撤销", (control) => run(control, async () => {
-      await api("shares/" + share.id + "/", {method: "DELETE"});
-      $("share-result").replaceChildren();
-      await refreshLinks();
-      notice("已撤销链接。");
-    }));
-    row.append(link, " ", revoke);
-    return row;
-  }));
-  if (!shares.length) $("links").textContent = "暂无分享链接。";
-}
-
-editor.addEventListener("submit", (event) => {
-  event.preventDefault();
-  if (saving) return;
-  if (recordingBusy || $("locate").disabled) {
-    editorStatus("请先完成语音转写或定位，再保存。", true);
-    return;
-  }
-  saving = true;
-  $("editor-controls").disabled = true;
-  editorStatus("正在保存…");
-  syncDraftWarning();
-  void (async () => {
-    try {
-      const fields = editor.elements;
-      const text = fields.text.value.trim();
-      if (!text && !editing?.archived) throw new Error("请输入记录正文。");
-      const enteredAt = fields.occurred_at.value;
-      const originalTime = editing && enteredAt === localDateTime(editing.occurred_at);
-      const occurredAt = originalTime ? editing.occurred_at : new Date(enteredAt || capturedAt || Date.now()).toISOString();
-      const choice = fields.event.value;
-      const version = editorVersion;
-      if (!editing && !coordinates && navigator.permissions && navigator.geolocation) {
-        try {
-          const permission = await navigator.permissions.query({name: "geolocation"});
-          if (permission.state === "granted") {
-            const position = await new Promise((resolve, reject) =>
-              navigator.geolocation.getCurrentPosition(resolve, reject, {timeout: 1500, maximumAge: 60000}));
-            const {latitude, longitude} = position.coords;
-            showCoordinates({latitude, longitude});
-          }
-        } catch {
-          // Location is optional. Save the entry if the browser cannot provide it.
-        }
-      }
-      const body = {
-        text,
-        occurred_at: occurredAt,
-        city: fields.city.value.trim(),
-        place: fields.place.value.trim(),
-        latitude: coordinates?.latitude ?? null,
-        longitude: coordinates?.longitude ?? null,
-        event: fields.event.eventById.get(choice) ?? null,
-      };
-      if (editing?.archived) {
-        delete body.occurred_at;
-        delete body.event;
-      }
-      const path = editing ? "entries/" + editing.id + "/" : "entries/";
-      await api(path, {method: editing ? "PATCH" : "POST", body});
-      if (editorVersion === version) resetEditor();
-      const day = dateKey(occurredAt);
-      $("compose").close();
-      notice("已保存。");
-      void setDay(day, day !== $("date").value);
-    } catch (error) {
-      editorStatus(error instanceof TypeError ? "无法连接服务器，内容已保留。请重试。" : error.message, true);
-    } finally {
-      saving = false;
-      $("editor-controls").disabled = false;
-      syncDraftWarning();
-    }
-  })();
-});
-
-$("cancel").addEventListener("click", () => {
-  if (!confirmDiscard()) return;
-  resetEditor();
-  editorStatus();
-  editor.elements.text.focus();
-});
-editor.addEventListener("input", () => {
-  syncDraftWarning();
-  if ($("editor-status").textContent === "已保存。") editorStatus();
-});
-editor.addEventListener("keydown", (event) => {
-  if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey) ||
-      event.isComposing || event.target !== editor.elements.text) return;
-  event.preventDefault();
-  if (!event.repeat && !saving) editor.requestSubmit($("save"));
-});
-$("backdate").addEventListener("click", () => {
-  const time = editor.elements.occurred_at;
-  const clock = time.value.slice(11) || localDateTime(Date.now()).slice(11);
-  time.value = $("date").value + "T" + clock;
-  $("capture-time").textContent = new Date(time.value).toLocaleString("zh-CN");
-  $("details").open = true;
-  syncDraftWarning();
-  editor.elements.text.focus();
-});
-function openPanel(id) {
+function openPanel(id, {root = false, focus = false} = {}) {
+  if (closingPanel || signingOut) return;
+  if (id !== "confirm" && (voiceState === "starting" || voiceState === "recording" || voiceState === "paused")) return;
+  if (currentPanel === id) return;
+  if (!currentPanel) panelOpener = document.activeElement;
+  if (currentPanel) { $(currentPanel).close(); if (!root) panelTrail.push(currentPanel); }
+  if (root) panelTrail = [];
+  currentPanel = id;
+  holdPanelHistory();
   const panel = $(id);
-  if (panel.open) return;
-  if (recordingBusy && !$("compose").open) return;
-  panel.showModal();
-  if (id === "compose") editor.elements.text.focus();
-  if (id === "search") $("search-text").focus();
-  if (id === "share") refreshLinks().catch((error) => { $("links").textContent = error.message; });
-}
-
-function closePanel(id) {
-  if (id === "compose" && (saving || recordingBusy || $("locate").disabled || !confirmDiscard())) return;
+  panel.showModal(); document.body.classList.add("has-panel");
+  $("notice").hidden = true;
   if (id === "compose") {
-    resetEditor();
-    editorStatus();
+    renderEditor();
+    (focus ? $("text") : $("capture-title")).focus({preventScroll: true});
+  } else {
+    panel.querySelector("h2")?.focus({preventScroll: true});
   }
-  $(id).close();
+  if (id === "history") { renderWeek(); if (!$("date").value) void setDay(dateKey()); }
+  if (id === "search") { $("search-text").focus(); if ($("search-text").value.trim()) void searchEntries(); }
+  if (id === "calendar") void loadCalendar();
+  if (id === "share") renderShare();
+  if (id === "links") void refreshLinks();
+  if (id === "drafts") renderDrafts();
+  if (id === "read") renderReader();
 }
-
-document.querySelectorAll("[data-open]").forEach((control) =>
-  control.addEventListener("click", () => openPanel(control.dataset.open)));
-document.querySelectorAll("[data-close]").forEach((control) =>
-  control.addEventListener("click", () => closePanel(control.dataset.close)));
-$("compose").addEventListener("cancel", (event) => {
-  event.preventDefault();
-  closePanel("compose");
-});
-$("write").addEventListener("click", () => openPanel("compose"));
-$("quick-write").addEventListener("click", () => openPanel("compose"));
-$("retry-day").addEventListener("click", loadDay);
-$("share-form").addEventListener("change", updateShareSelection);
-function renderMonth(date) {
-  shownMonth = new Date(date.getFullYear(), date.getMonth(), 1, 12);
-  $("month-label").textContent = shownMonth.toLocaleDateString("zh-CN", {year: "numeric", month: "long"});
-  const nodes = [..."一二三四五六日"].map((day) => element("span", day));
-  for (let i = 0; i < (shownMonth.getDay() + 6) % 7; i++) nodes.push(element("span"));
-  const year = shownMonth.getFullYear();
-  const month = shownMonth.getMonth();
-  const count = new Date(year, month + 1, 0).getDate();
-  for (let day = 1; day <= count; day++) {
-    const value = dateKey(new Date(year, month, day, 12));
-    const cell = button(String(day), () => {
-      toggleDatePanel(false);
-      $("open-date").focus();
-      void setDay(value);
-    });
-    cell.setAttribute("aria-label", value);
-    cell.setAttribute("aria-pressed", String(value === $("date").value));
-    if (value === dateKey()) cell.setAttribute("aria-current", "date");
-    nodes.push(cell);
-  }
-  $("month-days").replaceChildren(...nodes);
+function closePanels() {
+  if (currentPanel) $(currentPanel).close();
+  currentPanel = null; panelTrail = []; document.body.classList.remove("has-panel");
+  stopPlayback();
+  releasePanelHistory();
+  if (panelOpener?.isConnected && !panelOpener.closest("dialog")) panelOpener.focus({preventScroll: true});
 }
-
-function toggleDatePanel(open) {
-  $("date-panel").hidden = !open;
-  $("open-date").setAttribute("aria-expanded", String(open));
-  if (open) renderMonth(new Date($("date").value + "T12:00:00"));
-}
-
-$("open-date").addEventListener("click", () => toggleDatePanel($("date-panel").hidden));
-$("date-panel").addEventListener("keydown", (event) => {
-  if (event.key !== "Escape") return;
-  toggleDatePanel(false);
-  $("open-date").focus();
-});
-$("prev-month").addEventListener("click", () => renderMonth(new Date(shownMonth.getFullYear(), shownMonth.getMonth() - 1, 1)));
-$("next-month").addEventListener("click", () => renderMonth(new Date(shownMonth.getFullYear(), shownMonth.getMonth() + 1, 1)));
-
-function closeSearch() {
-  searchVersion += 1;
-  if ($("search").open) $("search").close();
-  $("search-results").replaceChildren();
-  $("search-status").textContent = "";
-}
-
-async function searchEntries() {
-  const query = $("search-text").value.trim();
-  if (!query) return closeSearch();
-  const version = ++searchVersion;
-
-  $("search-results").replaceChildren();
-  $("search-status").textContent = "正在搜索…";
-  try {
-    const {entries} = await api("entries/?" + new URLSearchParams({q: query}));
-    if (version !== searchVersion) return;
-    renderEntries($("search-results"), entries, false, true);
-    $("search-status").textContent = entries.length === 60 ? "显示最近 60 条匹配记录" :
-      entries.length ? `找到 ${entries.length} 条记录` : "没有匹配的记录。";
-  } catch (error) {
-    if (version === searchVersion) $("search-status").textContent = error.message;
-  }
-}
-
-$("search-form").addEventListener("submit", (event) => {
-  event.preventDefault();
-  void searchEntries();
-});
-
-$("prev").addEventListener("click", () => moveDay(-1));
-$("next").addEventListener("click", () => moveDay(1));
-$("today").addEventListener("click", () => setDay(dateKey()));
-$("clear-location").addEventListener("click", () => showCoordinates(null));
-$("locate").addEventListener("click", () => run($("locate"), async () => {
-  if (!navigator.geolocation) throw new Error("当前浏览器无法读取位置。");
-  const version = editorVersion;
-  const position = await new Promise((resolve, reject) =>
-    navigator.geolocation.getCurrentPosition(resolve, reject, {timeout: 10000}));
-  if (editorVersion !== version) return;
-  showCoordinates({latitude: position.coords.latitude, longitude: position.coords.longitude});
-  $("details").open = true;
-}));
-$("archive").addEventListener("click", () => run($("archive"), async () => {
-  const events = [...$("events").querySelectorAll("input:checked")].map((input) => dayEvents[Number(input.value)]);
-  if (!events.length) throw new Error("请先勾选要归档的日程。");
-  await api("calendar/archive/", {method: "POST", body: {events, tz}});
-  await loadDay();
-  notice("已归档所选日程。");
-}));
-
-$("share-form").addEventListener("submit", (event) => {
-  event.preventDefault();
-  run(event.submitter, async () => {
-    const form = new FormData(event.currentTarget);
-    const fields = form.getAll("fields");
-    if (!selected.size || !fields.length) throw new Error("请至少选择一条记录和一个可见字段。");
-    const {url} = await api("shares/", {method: "POST", body: {
-      entry_ids: [...selected], fields, expires_in: Number(form.get("expires_in")),
-    }});
-    const address = new URL(url, location.origin).href;
-    const link = element("a", address);
-    link.href = address;
-    const copy = button("复制", (control) => run(control, async () => {
-      await navigator.clipboard.writeText(address);
-      notice("已复制链接。");
-    }));
-    $("share-result").replaceChildren(link, " ", copy);
-    await refreshLinks();
-  }).finally(updateShareSelection);
-});
-
-async function toggleRecording(event) {
-  const control = event.currentTarget;
-  const quick = control.id === "voice-drop";
-  const status = $("voice-status");
-  const setStatus = (message) => {
-    if (quick) {
-      status.textContent = message;
-      control.setAttribute("aria-label", message);
-    } else {
-      control.textContent = message;
+async function backPanel() {
+  if (saving || closingPanel) return;
+  if (currentPanel === "confirm") { resolveConfirm(false); return; }
+  if (currentPanel === "compose" && currentDraft) {
+    closingPanel = true;
+    $("text").readOnly = true;
+    readEditor();
+    const saved = await persistDraft(currentDraft);
+    closingPanel = false;
+    $("text").readOnly = false;
+    if (!saved && meaningful(currentDraft)) {
+      editorStatus("本机暂时无法保存草稿，请先保存日记，或删除这份草稿后再离开。", true); return;
     }
-  };
-  if (recorder?.state === "recording") {
-    recorder.stop();
-    return;
+    stopPlayback();
   }
-  if (recordingBusy) return;
-  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-    if (quick) setStatus("当前浏览器无法录音，可改用文字记录。");
-    else editorStatus("当前浏览器无法录音。", true);
-    return;
-  }
-  const version = editorVersion;
-  let stream;
-  let stopTimer;
-  recordingBusy = true;
-  control.disabled = true;
-  setStatus("正在开启麦克风…");
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({audio: true});
-    recorder = new MediaRecorder(stream);
-    const chunks = [];
-    recorder.addEventListener("dataavailable", (event) => chunks.push(event.data));
-    recorder.addEventListener("error", () => notice("录音失败，请重试。"), {once: true});
-    recorder.addEventListener("stop", () => {
-      clearTimeout(stopTimer);
-      stream.getTracks().forEach((track) => track.stop());
-      control.setAttribute("aria-pressed", "false");
-      setStatus("正在转写…");
-      control.disabled = true;
-      void (async () => {
-        try {
-          if (editorVersion !== version) return;
-          const type = recorder.mimeType || chunks[0]?.type;
-          const extension = type?.includes("mp4") ? "m4a" : type?.includes("ogg") ? "ogg" : "webm";
-          const audio = new Blob(chunks, {type});
-          if (!audio.size) throw new Error("没有录到声音，请重试。");
-          if (audio.size > 20 * 1024 * 1024) throw new Error(errorMessages.audio_too_large);
-          setStatus("正在上传…");
-          const upload = await api("integrations/audio-upload/", {method: "POST", body: {extension}});
-          const body = new FormData();
-          body.append("key", upload.key);
-          body.append("token", upload.token);
-          body.append("file", audio, "drop." + extension);
-          const response = await fetch(upload.url, {method: "POST", body, signal: AbortSignal.timeout(60000)});
-          if (!response.ok) throw new Error("录音上传失败，请重试。");
-          setStatus("正在转写…");
-          const {text} = await api("integrations/transcribe/", {method: "POST", body: {ticket: upload.ticket}});
-          if (editorVersion !== version) return;
-          if (!text?.trim()) throw new Error("未识别到文字。");
-          const input = editor.elements.text;
-          input.value = [input.value, text].filter(Boolean).join("\n");
-          syncDraftWarning();
-          if (quick) {
-            recordingBusy = false;
-            openPanel("compose");
-          }
-          input.focus();
-        } catch (error) {
-          if (quick) status.textContent = error.message;
-          else editorStatus(error.message, true);
-        } finally {
-          recordingBusy = false;
-          recorder = null;
-          control.disabled = false;
-          if (quick) {
-            control.setAttribute("aria-label", "开始录音");
-            if ($("compose").open) status.textContent = "轻点水滴，记下此刻";
-          } else setStatus("语音转文字");
-        }
-      })();
-    }, {once: true});
-    recorder.start();
-    if (quick) capturedAt = Date.now();
-    stopTimer = setTimeout(() => {
-      if (recorder?.state === "recording") recorder.stop();
-    }, 60000);
-    control.setAttribute("aria-pressed", "true");
-    setStatus("停止录音");
-    control.disabled = false;
-  } catch {
-    stream?.getTracks().forEach((track) => track.stop());
-    recordingBusy = false;
-    control.disabled = false;
-    if (quick) {
-      status.textContent = "无法开始录音，请检查麦克风权限。";
-      control.setAttribute("aria-label", "重试录音");
-    } else {
-      setStatus("语音转文字");
-      editorStatus("无法开始录音，请检查麦克风权限。", true);
-    }
-  }
+  if (!currentPanel) return;
+  $(currentPanel).close();
+  const previous = panelTrail.pop(); currentPanel = null;
+  if (previous) { const trail = [...panelTrail]; openPanel(previous); panelTrail = trail; }
+  else { document.body.classList.remove("has-panel"); releasePanelHistory(); panelOpener?.focus?.({preventScroll: true}); }
+  renderDraftSummary();
 }
-
-$("record").addEventListener("click", toggleRecording);
-$("voice-drop").addEventListener("click", toggleRecording);
-
-$("logout").addEventListener("click", () => {
-  if (!confirmDiscard()) return;
-  return run($("logout"), async () => {
-    await api("logout/", {method: "POST"});
-    window.removeEventListener("beforeunload", preventDraftLoss);
-    location.reload();
+function ask(title, copy, accept = "删除", cancel = "保留") {
+  if (confirmResolve) return Promise.resolve(false);
+  $("confirm-title").textContent = title; $("confirm-copy").textContent = copy;
+  $("confirm-accept").textContent = accept; $("confirm-cancel").textContent = cancel;
+  openPanel("confirm"); $("confirm-cancel").focus();
+  return new Promise(resolve => { confirmResolve = resolve; });
+}
+function resolveConfirm(value) {
+  const resolve = confirmResolve; confirmResolve = null;
+  if (currentPanel === "confirm") {
+    $("confirm").close(); currentPanel = null;
+    const previous = panelTrail.pop();
+    if (previous) { const trail = [...panelTrail]; openPanel(previous); panelTrail = trail; }
+    else { document.body.classList.remove("has-panel"); releasePanelHistory(); }
+  }
+  resolve?.(value);
+}
+window.addEventListener("popstate", () => {
+  if (skipPanelPop) { skipPanelPop = false; if (currentPanel) holdPanelHistory(); return; }
+  if (currentPanel) { holdPanelHistory(); void backPanel(); }
+});
+$("confirm-accept").addEventListener("click", () => resolveConfirm(true));
+$("confirm-cancel").addEventListener("click", () => resolveConfirm(false));
+document.querySelectorAll("[data-open]").forEach(control => control.addEventListener("click", () => {
+  if (control.dataset.open === "share") { shareContextEntry = null; selected.clear(); $("share-result").replaceChildren(); }
+  openPanel(control.dataset.open);
+}));
+document.querySelectorAll("[data-back]").forEach(control => control.addEventListener("click", () => { void backPanel(); }));
+document.querySelectorAll("dialog").forEach(panel => {
+  panel.addEventListener("cancel", event => { event.preventDefault(); void backPanel(); });
+  panel.addEventListener("click", event => {
+    if (event.target !== panel) return;
+    const rect = panel.getBoundingClientRect();
+    if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) void backPanel();
   });
 });
-$("dev-login").addEventListener("click", () => run($("dev-login"), async () => {
-  await api("dev-login/", {method: "POST"});
-  location.reload();
-}));
+$("dismiss-notice").addEventListener("click", () => { $("notice").hidden = true; });
 
-async function start() {
-  const token = document.body.dataset.shareToken || new URLSearchParams(location.search).get("share");
-  if (token) {
-    $("public").hidden = false;
-    $("public-state").textContent = "正在读取分享…";
+function meaningful(draft) {
+  if (!draft) return false;
+  if (draft.audio) return true;
+  if (draft.entry) return draft.text !== draft.entry.text || JSON.stringify(draft.coordinates) !== JSON.stringify(entryCoordinates(draft.entry)) || (!draft.entry.archived && (draft.occurredAt !== draft.entry.occurred_at || JSON.stringify(draft.event) !== JSON.stringify(draft.entry.event)));
+  return Boolean(draft.text?.trim());
+}
+function persistDraft(draft) {
+  if (!draft || draft.deleted || signingOut) return Promise.resolve(false);
+  clearTimeout(draftTimers.get(draft.id)); draftTimers.delete(draft.id);
+  draft.updatedAt = Date.now();
+  const snapshot = {...draft};
+  delete snapshot.transcribing;
+  if (meaningful(snapshot)) drafts.set(draft.id, draft); else drafts.delete(draft.id);
+  renderDraftSummary();
+  if (!store) { localFailures.add(draft.id); return Promise.resolve(false); }
+  pendingWrites++;
+  const operation = draftWrite.catch(() => {}).then(async () => {
     try {
-      const {entries} = await api("public/shares/" + encodeURIComponent(token) + "/");
-      renderEntries($("public-entries"), entries, true);
-      $("public-state").textContent = entries.length ? "" : "这里没有可见记录。";
-    } catch (error) {
-      $("public-state").textContent = error.message;
-    }
-    return;
+      if (draft.deleted || signingOut) return false;
+      if (meaningful(snapshot)) await store.put(snapshot); else await store.remove(snapshot.id);
+      localFailures.delete(snapshot.id);
+      return true;
+    } catch {
+      localFailures.add(snapshot.id); return false;
+    } finally { pendingWrites--; }
+  });
+  draftWrite = operation;
+  return operation;
+}
+async function removeDraft(draft) {
+  draft.deleted = true;
+  clearTimeout(draftTimers.get(draft.id)); draftTimers.delete(draft.id);
+  if (pendingVoice?.id === draft.id) { ++voiceProcess; pendingVoice = null; setVoiceState("idle"); }
+  await draftWrite.catch(() => {});
+  try { await store?.remove(draft.id); }
+  catch (error) { draft.deleted = false; throw error; }
+  drafts.delete(draft.id); localFailures.delete(draft.id); renderDraftSummary();
+}
+function newDraft({text = "", event = null, day, source = "text"} = {}) {
+  const now = new Date();
+  if (day && day !== dateKey()) {
+    const target = dayDate(day); target.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), 0);
+    now.setTime(target.getTime());
   }
-  const session = await api("session/");
-  csrfToken = session.csrf_token;
-  if (!session.authenticated) {
-    $("guest").hidden = false;
-    $("dev-login").hidden = !session.dev_login;
-    return;
-  }
-  const identity = $("identity");
-  identity.textContent = session.display_name || "";
-  if (session.avatar_url) {
-    const avatar = document.createElement("img");
-    avatar.alt = "";
-    avatar.referrerPolicy = "no-referrer";
-    avatar.addEventListener("error", () => avatar.remove(), {once: true});
-    avatar.src = session.avatar_url;
-    identity.prepend(avatar);
-  }
-  $("grants").hidden = false;
-  $("logout").hidden = false;
-  $("journal").hidden = false;
-  resetEditor();
-  await setDay(dateKey());
-  const url = new URL(location.href);
-  const outcome = url.searchParams.get("chronelle");
-  if (outcome) {
-    url.searchParams.delete("chronelle");
-    history.replaceState(null, "", url);
-    openPanel("calendar");
-    $("calendar").querySelector(".panel-status").textContent = {
-      connected: "已连接 Chronelle。", denied: "已取消 Chronelle 授权。", failed: "连接失败，请重新授权。",
-    }[outcome] || "";
+  return {id: uuid(), clientId: uuid(), text, occurredAt: now.toISOString(), coordinates: null, city: "", place: "", event, source, updatedAt: Date.now(), audio: null, audioApplied: false, locationDisabled: false};
+}
+function renderDraftSummary() {
+  const count = drafts.size;
+  $("draft-resume").hidden = !count;
+  $("draft-label").textContent = count === 1 ? "还有一段没写完，接着记" : `还有 ${count} 段没写完`;
+}
+function renderDrafts() {
+  const list = [...drafts.values()].sort((a,b) => b.updatedAt - a.updatedAt);
+  $("draft-list").replaceChildren(...list.map(draft => {
+    const row = node("div", undefined, "draft-item");
+    const resume = button("", () => { currentDraft = draft; openPanel("compose"); });
+    resume.append(node("strong", draft.text?.trim() || "一段还没转成文字的声音"), node("small", momentLabel(draft.occurredAt) + (draft.entry ? " · 未完成的修改" : draft.audio ? " · 语音草稿" : " · 文字草稿")));
+    const discard = button("", async () => {
+      if (!await ask("删除这份草稿？", "草稿中的文字和录音会从这个浏览器移除。已保存的日记不受影响。")) return;
+      await run(discard, async () => { await removeDraft(draft); if (currentDraft?.id === draft.id) currentDraft = null; renderDrafts(); });
+    }, "icon-button destructive");
+    discard.append(icon("trash")); discard.setAttribute("aria-label", "删除草稿");
+    row.append(resume, discard); return row;
+  }));
+  if (!list.length) $("draft-list").append(node("p", "写到一半的片刻，会在这里等你。", "supporting"));
+}
+function entryCoordinates(entry) { return entry.latitude != null && entry.longitude != null ? {latitude: Number(entry.latitude), longitude: Number(entry.longitude)} : null; }
+
+async function monthData(month, fresh = false) {
+  if (!fresh && monthCache.has(month)) return monthCache.get(month);
+  const result = await api("entries/days/?" + new URLSearchParams({month, tz}));
+  monthCache.set(month, result); latestDate = result.latest_date; return result;
+}
+function dateCount(day) { return monthCache.get(day.slice(0,7))?.days.find(item => item.date === day)?.count || 0; }
+async function loadDay() {
+  const day = $("date").value || dateKey();
+  const version = ++dayVersion;
+  const date = dayDate(day);
+  $("day-title").textContent = dayFormat.format(date);
+  $("day-subtitle").textContent = date.getFullYear() + " · " + weekdayFormat.format(date) + (day === dateKey() ? " · 今天" : day === shiftDay(dateKey(), -1) ? " · 昨天" : "");
+  $("today").hidden = day === dateKey();
+  $("entry-state").textContent = "正在翻到这一天…";
+  $("entries").setAttribute("aria-busy", "true");
+  $("retry-day").hidden = true; $("empty-day").hidden = true;
+  $("entries").replaceChildren();
+  dayEntries = [];
+  renderWeek();
+  try {
+    const {entries} = await api("entries/?" + new URLSearchParams({date: day, tz}));
+    entryCache.set(day, entries);
+    if (version !== dayVersion) return;
+    dayEntries = entries; renderEntries($("entries"), entries);
+    $("entry-state").textContent = entries.length ? `这一天，留下了 ${entries.length} 个片刻` : "";
+    $("empty-day").hidden = entries.length > 0;
+    $("latest-day").hidden = !latestDate || latestDate === day;
+  } catch (error) {
+    if (version !== dayVersion) return;
+    $("entry-state").textContent = message(error); $("retry-day").hidden = false;
+  } finally {
+    if (version === dayVersion) $("entries").setAttribute("aria-busy", "false");
   }
 }
-start().catch((error) => notice(error.message));
+function setDay(day) {
+  if (day > dateKey()) day = dateKey();
+  $("date").value = day;
+  selected.clear(); shareContextEntry = null;
+  if (!$("date-panel").hidden) void renderMonth(dayDate(day));
+  return loadDay();
+}
+function renderWeek() {
+  const day = $("date").value || dateKey();
+  const start = shiftDay(day, -(dayDate(day).getDay() + 6) % 7);
+  const days = Array.from({length: 7}, (_, i) => shiftDay(start, i));
+  $("week-days").replaceChildren(...days.map((value, i) => {
+    const count = dateCount(value);
+    const cell = button("", () => { void setDay(value); }, "week-day" + (count ? " has-entries" : ""));
+    cell.append(node("span", value === dateKey() ? "今" : "一二三四五六日"[i]), node("strong", dayDate(value).getDate()));
+    cell.setAttribute("aria-pressed", String(value === day));
+    cell.setAttribute("aria-label", value + (count ? `，${count} 条记录` : ""));
+    cell.disabled = value > dateKey(); return cell;
+  }));
+  $("next").disabled = shiftDay(start, 7) > dateKey();
+  const missing = [...new Set(days.map(value => value.slice(0,7)))].filter(month => !monthCache.has(month));
+  for (const month of missing) {
+    // Pending markers avoid duplicate requests while rendering another week.
+    monthCache.set(month, {days: [], latest_date: latestDate});
+    void monthData(month, true).then(() => { if ($("date").value === day) renderWeek(); }).catch(() => { monthCache.delete(month); });
+  }
+}
+async function renderMonth(date) {
+  shownMonth = new Date(date.getFullYear(), date.getMonth(), 1, 12);
+  const month = dateKey(shownMonth).slice(0,7), version = ++monthVersion;
+  $("month-label").textContent = shownMonth.getFullYear() + " 年 " + (shownMonth.getMonth() + 1) + " 月";
+  $("next-month").disabled = month >= dateKey().slice(0,7);
+  $("month-status").textContent = "";
+  const draw = () => {
+    const nodes = [..."一二三四五六日"].map(day => node("span", day));
+    const offset = (shownMonth.getDay() + 6) % 7;
+    for (let i = 0; i < offset; i++) nodes.push(node("span", ""));
+    const count = new Date(shownMonth.getFullYear(), shownMonth.getMonth() + 1, 0).getDate();
+    for (let i = 1; i <= count; i++) {
+      const value = month + "-" + String(i).padStart(2,"0"), amount = dateCount(value);
+      const cell = button(String(i), () => { toggleDate(false); void setDay(value); $("open-date").focus(); }, amount ? "has-entries" : "");
+      cell.disabled = value > dateKey();
+      cell.setAttribute("aria-label", value + (amount ? `，${amount} 条记录` : ""));
+      cell.setAttribute("aria-pressed", String(value === $("date").value));
+      if (value === dateKey()) cell.setAttribute("aria-current", "date");
+      nodes.push(cell);
+    }
+    $("month-days").replaceChildren(...nodes);
+  };
+  draw();
+  try { await monthData(month, true); if (version === monthVersion) draw(); }
+  catch { if (version === monthVersion) $("month-status").textContent = "日期仍可选择，记录标点暂时没有载入。"; }
+}
+function toggleDate(open) {
+  $("date-panel").hidden = !open; $("open-date").setAttribute("aria-expanded", String(open));
+  if (open) void renderMonth(dayDate($("date").value));
+}
+function renderEntries(target, entries, {publicView = false, search = false} = {}) {
+  target.replaceChildren(...entries.map(entry => {
+    const card = node("article", undefined, "note");
+    const content = publicView ? node("div", undefined, "note-open") : button("", () => viewEntry(entry), "note-open");
+    if (entry.occurred_at) {
+      const time = node("time", search || publicView ? momentLabel(entry.occurred_at) : clockFormat.format(new Date(entry.occurred_at)));
+      time.dateTime = entry.occurred_at; content.append(time);
+    }
+    if (entry.text || entry.event || !publicView) content.append(node("p", entry.text || eventName(entry.event) || "一个日程片刻", "note-text"));
+    const meta = node("div", undefined, "note-meta");
+    const place = [entry.city, entry.place].filter(Boolean).join(" · ");
+    if (place || entry.latitude != null || entry.longitude != null) {
+      const location = node("span", place || (publicView ? [entry.latitude != null ? `纬度 ${entry.latitude}` : "", entry.longitude != null ? `经度 ${entry.longitude}` : ""].filter(Boolean).join(" · ") : "此刻的位置"));
+      location.prepend(icon("pin")); meta.append(location);
+    }
+    if (entry.event) { const event = node("span", eventName(entry.event)); event.prepend(icon("calendar")); meta.append(event); }
+    if (meta.childElementCount) content.append(meta);
+    if (!publicView) content.setAttribute("aria-label", `${entry.occurred_at ? momentLabel(entry.occurred_at) : ""}，${(entry.text || eventName(entry.event) || "日程").slice(0, 100)}，打开记录`);
+    card.append(content); return card;
+  }));
+}
+function viewEntry(entry) { currentEntry = entry; openPanel("read"); }
+function renderReader() {
+  if (!currentEntry) return;
+  const entry = currentEntry;
+  $("read-date").textContent = new Date(entry.occurred_at).toLocaleDateString("zh-CN", {year: "numeric", month: "long", day: "numeric", weekday: "short"}) + " · " + clockFormat.format(new Date(entry.occurred_at));
+  $("read-content").textContent = entry.text || "这段日程已留下，还可以写一点当时的感受。";
+  $("read-meta").replaceChildren();
+  if (entry.event) { const el = node("p", eventName(entry.event)); el.prepend(icon("calendar")); $("read-meta").append(el); }
+  if (entry.city || entry.place) { const el = node("p", [entry.city, entry.place].filter(Boolean).join(" · ")); el.prepend(icon("pin")); $("read-meta").append(el); }
+  if (entry.latitude != null && entry.longitude != null) {
+    const details = node("details"); details.append(node("summary", "此刻留下的位置"), node("p", `纬度 ${Number(entry.latitude).toFixed(5)} · 经度 ${Number(entry.longitude).toFixed(5)}`)); $("read-meta").append(details);
+  }
+  $("read").querySelector(".panel-status").textContent = "";
+}
+async function refreshHome() {
+  const version = ++homeVersion;
+  try {
+    const result = await monthData(dateKey().slice(0,7), true);
+    if (version !== homeVersion) return;
+    latestDate = result.latest_date;
+    $("latest-day").hidden = !latestDate || latestDate === $("date").value;
+    if (!latestDate) { lastEntry = null; $("last-entry").hidden = true; return; }
+    const data = await api("entries/?" + new URLSearchParams({date: latestDate, tz}));
+    if (version !== homeVersion) return;
+    entryCache.set(latestDate, data.entries); lastEntry = data.entries[0] || null;
+    $("last-entry").hidden = !lastEntry;
+    if (lastEntry) {
+      $("last-entry-label").textContent = "上次留下的 · " + momentLabel(lastEntry.occurred_at);
+      $("last-entry-text").textContent = lastEntry.text || eventName(lastEntry.event) || "一个日程片刻";
+    }
+  } catch { /* The private capture surface remains usable when history cannot load. */ }
+}
+$("last-entry").addEventListener("click", () => { if (lastEntry) viewEntry(lastEntry); });
+$("open-date").addEventListener("click", () => toggleDate($("date-panel").hidden));
+$("date-panel").addEventListener("keydown", event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); toggleDate(false); $("open-date").focus(); } });
+$("prev-month").addEventListener("click", () => void renderMonth(new Date(shownMonth.getFullYear(), shownMonth.getMonth() - 1, 1)));
+$("next-month").addEventListener("click", () => void renderMonth(new Date(shownMonth.getFullYear(), shownMonth.getMonth() + 1, 1)));
+$("prev").addEventListener("click", () => void setDay(shiftDay($("date").value, -7)));
+$("next").addEventListener("click", () => void setDay(shiftDay($("date").value, 7)));
+$("today").addEventListener("click", () => void setDay(dateKey()));
+$("latest-day").addEventListener("click", () => { if (latestDate) void setDay(latestDate); });
+$("retry-day").addEventListener("click", () => void loadDay());
+$("view-day").addEventListener("click", () => { void setDay(dateKey(currentEntry.occurred_at)); openPanel("history", {root: true}); });
+
+function readEditor() {
+  if (!currentDraft || currentPanel !== "compose") return;
+  currentDraft.text = $("text").value;
+}
+function resizeEditor() {
+  $("text").style.height = "auto";
+  $("text").style.height = Math.max(180, $("text").scrollHeight) + "px";
+}
+function renderEditor() {
+  if (!currentDraft) return;
+  const draft = currentDraft;
+  $("text").value = draft.text || "";
+  $("capture-title").textContent = draft.entry ? "再写一点" : draft.source === "voice" ? "刚刚说的" : "写几句";
+  $("save").querySelector("span").textContent = draft.entry ? "保存修改" : "留下这一滴";
+  $("capture-context").textContent = momentLabel(draft.occurredAt) + (draft.event ? " · " + eventName(draft.event) : "");
+  $("capture-time").textContent = "记录于 " + new Date(draft.occurredAt).toLocaleString("zh-CN");
+  $("backdate").hidden = Boolean(draft.entry) || !$("date").value || $("date").value >= dateKey() || dateKey(draft.occurredAt) === $("date").value;
+  $("backdate").textContent = "改为补记 " + dayFormat.format(dayDate($("date").value || dateKey()));
+  $("coordinates").textContent = draft.coordinates ? "已附上此刻的位置" : "未附位置";
+  $("clear-location").hidden = !draft.coordinates;
+  $("locate").hidden = Boolean(draft.coordinates);
+  $("details").hidden = true; $("capture-details").setAttribute("aria-expanded", "false");
+  renderEventOptions();
+  setupPlayback();
+  renderTranscriptionState();
+  editorStatus(localFailures.has(draft.id) ? "本机草稿未能保存，请不要关闭页面。" : drafts.has(draft.id) ? "草稿留在本机 · 仅自己可见" : "仅自己可见", localFailures.has(draft.id));
+  $("save").disabled = saving || (pendingVoice?.id === draft.id && voiceState === "processing");
+  $("record").disabled = voiceState === "processing";
+  resizeEditor();
+}
+function renderTranscriptionState() {
+  const draft = currentDraft;
+  const pending = Boolean(draft?.audio && !draft.audioApplied);
+  $("draft-transcription").hidden = !pending;
+  if (pending) {
+    const busy = pendingVoice?.id === draft.id && voiceState === "processing";
+    $("draft-transcription-status").textContent = busy ? "正在把声音写下来…" : "这段声音还没转成文字，录音仍保留在草稿里。";
+    $("retry-transcription").disabled = busy;
+  }
+}
+async function openNewEditor(options = {}) {
+  updateHomeDate();
+  currentDraft = newDraft(options);
+  openPanel("compose", {focus: true});
+  if (!options.day || options.day === dateKey()) void locateDraft(currentDraft, false);
+}
+function editEntry(entry) {
+  const existing = drafts.get("edit-" + entry.id);
+  currentDraft = existing || {
+    id: "edit-" + entry.id, clientId: uuid(), text: entry.text, occurredAt: entry.occurred_at,
+    coordinates: entryCoordinates(entry), city: entry.city || "", place: entry.place || "", event: entry.event || null,
+    entry: {...entry}, source: "text", updatedAt: Date.now(), audio: null, audioApplied: false, locationDisabled: false,
+  };
+  openPanel("compose", {focus: true});
+}
+function renderEventOptions() {
+  const draft = currentDraft;
+  $("event-options").replaceChildren();
+  if (!draft) return;
+  const snapshots = [...dayEvents, ...dayEntries.filter(entry => entry.event).map(entry => entry.event)];
+  if (draft.event) snapshots.push(draft.event);
+  const events = [...new Map(snapshots.map(event => [event.id, event])).values()];
+  $("event-label").hidden = !events.length;
+  if (!events.length) return;
+  for (const event of [null, ...events]) {
+    const choice = button(event ? eventName(event) : "不关联", () => { draft.event = event; renderEventOptions(); void persistDraft(draft); });
+    choice.setAttribute("aria-pressed", String((event?.id || null) === (draft.event?.id || null)));
+    choice.disabled = Boolean(draft.entry?.archived);
+    $("event-options").append(choice);
+  }
+}
+async function locateDraft(draft, explicit) {
+  if (!draft || draft.locationDisabled || (!explicit && (!autoLocation || draft.entry || dateKey(draft.occurredAt) !== dateKey()))) return;
+  const version = locationVersion;
+  try {
+    if (!navigator.geolocation) throw new Error("这个浏览器暂时无法读取位置，仍可以正常写日记。");
+    if (!explicit) {
+      if (!navigator.permissions) return;
+      const permission = await navigator.permissions.query({name: "geolocation"});
+      if (permission.state !== "granted") return;
+    }
+    const position = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, {timeout: explicit ? 10000 : 2500, maximumAge: 30000, enableHighAccuracy: false}));
+    if (version !== locationVersion || draft.locationDisabled || draft.saved || draft.deleted || signingOut) return;
+    draft.coordinates = {latitude: position.coords.latitude, longitude: position.coords.longitude};
+    if (meaningful(draft)) await persistDraft(draft);
+    if (currentDraft?.id === draft.id && currentPanel === "compose") {
+      $("coordinates").textContent = "已附上此刻的位置"; $("locate").hidden = true; $("clear-location").hidden = false;
+    }
+  } catch (error) {
+    if (explicit) {
+      const copy = error.code === 1 ? "没有获得位置权限，仍可以正常写日记。" : error.code === 3 ? "暂时找不到位置，可以稍后再试。" : message(error);
+      if (currentPanel === "compose") editorStatus(copy, true); else $("location-setting-status").textContent = copy;
+    }
+  }
+}
+$("quick-write").addEventListener("click", () => void openNewEditor());
+$("write").addEventListener("click", () => void openNewEditor({day: $("date").value}));
+$("write-day").addEventListener("click", () => void openNewEditor({day: $("date").value}));
+$("read-edit").addEventListener("click", () => editEntry(currentEntry));
+$("text").addEventListener("input", () => {
+  readEditor(); resizeEditor(); clearTimeout(draftTimers.get(currentDraft.id));
+  editorStatus("正在留存草稿…");
+  const draft = currentDraft;
+  draftTimers.set(draft.id, setTimeout(async () => {
+    const saved = await persistDraft(draft);
+    if (currentDraft?.id === draft.id && currentPanel === "compose") editorStatus(saved ? "草稿留在本机 · 仅自己可见" : "本机草稿未能保存，请不要关闭页面。", !saved);
+  }, 200));
+});
+$("text").addEventListener("keydown", event => {
+  if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.isComposing) {
+    event.preventDefault(); if (!event.repeat && !saving) $("editor").requestSubmit();
+  }
+});
+$("capture-details").addEventListener("click", () => {
+  $("details").hidden = !$("details").hidden;
+  $("capture-details").setAttribute("aria-expanded", String(!$("details").hidden));
+  if (!$("details").hidden) $("details").scrollIntoView({block: "nearest"});
+});
+$("backdate").addEventListener("click", () => {
+  if (!currentDraft || currentDraft.entry) return;
+  const target = dayDate($("date").value), clock = new Date(currentDraft.occurredAt);
+  target.setHours(clock.getHours(), clock.getMinutes(), clock.getSeconds(), 0);
+  currentDraft.occurredAt = target.toISOString();
+  currentDraft.coordinates = null; currentDraft.locationDisabled = true;
+  void persistDraft(currentDraft); renderEditor();
+});
+$("locate").addEventListener("click", () => {
+  if (currentDraft) { currentDraft.locationDisabled = false; void run($("locate"), () => locateDraft(currentDraft, true)); }
+});
+$("clear-location").addEventListener("click", () => {
+  if (!currentDraft) return;
+  currentDraft.coordinates = null; currentDraft.locationDisabled = true; locationVersion++;
+  $("coordinates").textContent = "未附位置"; $("clear-location").hidden = true; $("locate").hidden = false;
+  void persistDraft(currentDraft);
+});
+$("discard-draft").addEventListener("click", async () => {
+  if (!currentDraft || saving || (voiceState === "processing" && pendingVoice?.id === currentDraft.id)) return;
+  readEditor();
+  const draft = currentDraft;
+  if (meaningful(draft) && !await ask("删除这份草稿？", "草稿中的文字和录音会移除。已保存的日记不受影响。")) return;
+  try { await removeDraft(draft); currentDraft = null; stopPlayback(); await backPanel(); }
+  catch { editorStatus("没能移除草稿，请再试一次。", true); }
+});
+
+$("editor").addEventListener("submit", async event => {
+  event.preventDefault();
+  if (saving || !currentDraft || (voiceState === "processing" && pendingVoice?.id === currentDraft.id)) return;
+  readEditor();
+  const draft = currentDraft;
+  if (!draft.text.trim() && !draft.entry?.archived) { editorStatus(draft.audio ? "先把声音转成文字，或写下一句话，再保存。" : "写下一句话，就可以留下这一刻。", true); return; }
+  if (draft.audio && !draft.audioApplied) {
+    if (!await ask("只保存写下的文字？", "这段录音还没转成文字。只保存正文后，这份草稿里的录音会移除。", "只保存文字", "继续转写")) return;
+  }
+  saving = true; $("save").disabled = true; $("text").readOnly = true; $("record").disabled = true;
+  editorStatus("正在收好这一刻…");
+  await persistDraft(draft);
+  try {
+    const body = {
+      text: draft.text.trim(), occurred_at: draft.occurredAt, city: draft.city || "", place: draft.place || "",
+      latitude: draft.coordinates?.latitude ?? null, longitude: draft.coordinates?.longitude ?? null, event: draft.event || null,
+    };
+    if (draft.entry?.archived) { delete body.occurred_at; delete body.event; }
+    if (!draft.entry) body.client_id = draft.clientId;
+    // Keep the first payload for a transport retry; the server deduplicates its client ID.
+    if (!draft.entry && !draft.submitted) { draft.submitted = {...body}; await persistDraft(draft); }
+    let saved = await api(draft.entry ? "entries/" + draft.entry.id + "/" : "entries/", {method: draft.entry ? "PATCH" : "POST", body: draft.entry ? body : draft.submitted});
+    // If a user improved a draft after a lost response, reconcile those improvements onto the same entry.
+    if (!draft.entry && JSON.stringify(body) !== JSON.stringify(draft.submitted)) {
+      const update = {...body}; delete update.client_id;
+      saved = await api("entries/" + saved.id + "/", {method: "PATCH", body: update});
+    }
+    draft.saved = true;
+    try { await removeDraft(draft); } catch {
+      // A saved tombstone prevents a local cleanup failure from reviving this draft after reload.
+      await persistDraft(draft); drafts.delete(draft.id); localFailures.delete(draft.id); renderDraftSummary();
+    }
+    currentDraft = null; pendingVoice = null; stopPlayback(); setVoiceState("idle");
+    monthCache.clear(); entryCache.clear();
+    if (draft.entry) {
+      currentEntry = saved; openPanel("read", {root: true}); notice("修改已保存。");
+    } else {
+      closePanels();
+      $("home-title").textContent = "这一刻，收好了。";
+      $("home-caption").textContent = "以后再读，还能遇见现在的自己。";
+      notice("已留在日记里，仅自己可见。");
+    }
+    void setDay(dateKey(saved.occurred_at)); void refreshHome();
+  } catch (error) {
+    editorStatus(message(error) + (localFailures.has(draft.id) ? " 内容仅在当前页面，请不要关闭。" : " 草稿已留在本机，可以重试。"), true);
+  } finally {
+    saving = false; $("save").disabled = false; $("text").readOnly = false; $("record").disabled = false;
+  }
+});
+
+$("read-delete").addEventListener("click", async () => {
+  if (!currentEntry) return;
+  const entry = currentEntry;
+  if (!await ask("让这一刻离开日记？", "删除后无法恢复，这条记录也会从已分享的链接中移除。", "删除记录", "留着")) return;
+  await run($("read-delete"), async () => {
+    await api("entries/" + entry.id + "/", {method: "DELETE"});
+    const draft = drafts.get("edit-" + entry.id);
+    if (draft) await removeDraft(draft);
+    selected.delete(entry.id); monthCache.clear(); entryCache.clear();
+    currentEntry = null; openPanel("history", {root: true});
+    await loadDay(); void refreshHome(); notice("这条记录已删除。");
+  });
+});
+
+function setVoiceState(state, detail) {
+  voiceState = state; scene.dataset.state = state;
+  const live = state === "recording" || state === "paused";
+  const busy = state === "starting" || state === "processing";
+  $("voice-drop").disabled = busy;
+  $("voice-drop").setAttribute("aria-pressed", String(live));
+  $("voice-drop").setAttribute("aria-label", live ? "说好了，结束录音" : state === "error" ? "开始一段新录音" : "开始语音记录");
+  $("recording-meter").hidden = !live;
+  $("recording-actions").hidden = !live;
+  $("voice-recovery").hidden = state !== "error" || !pendingVoice?.audio;
+  $("home-actions").hidden = live || busy;
+  document.querySelector(".home-keepsakes").hidden = live || busy;
+  $("account-button").disabled = live || busy;
+  const statuses = {
+    idle: ["轻点水滴，记下此刻", "每段最多一分钟，说完再轻点一下"],
+    starting: ["正在打开麦克风…", "第一次使用，需要允许麦克风访问"],
+    recording: ["在听了，慢慢来", "说完轻点水滴，就能看到文字"],
+    paused: ["停一停，也没关系", "继续说，或轻点水滴结束这一段"],
+    processing: ["正在把声音写下来…", "稍等一下，马上就好"],
+    error: ["这段话还可以继续", "可以重试转写，也可以先留在草稿里"],
+  };
+  $("voice-status").textContent = detail || statuses[state][0];
+  $("voice-hint").textContent = statuses[state][1];
+  if (live) {
+    $("home-title").textContent = "此刻，慢慢说。";
+    $("home-caption").textContent = state === "paused" ? "等你想好了，再接着说。" : "一点心情，一件小事，都可以。";
+  } else if (state === "idle") {
+    $("home-title").textContent = "今天，想留下什么？";
+    $("home-caption").textContent = "不用组织语言，想到什么就说什么。";
+  }
+  $("pause-recording").querySelector("span").textContent = state === "paused" ? "继续说" : "暂停一下";
+  $("pause-recording").querySelector("use").setAttribute("href", state === "paused" ? "#i-play" : "#i-pause");
+  if (!live) scene.style.setProperty("--level", 0);
+}
+async function startRecording(draft = null) {
+  if (startingVoice || capture || voiceState === "starting" || voiceState === "processing" || signingOut) return;
+  updateHomeDate();
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    setVoiceState("error", "这个浏览器暂时无法录音，可以先写几句。");
+    $("voice-hint").textContent = "也可以在 Safari 或 Chrome 中打开一滴"; return;
+  }
+  if (draft?.audio && !draft.audioApplied) {
+    editorStatus("上一段声音还没转成文字。先点“重新转写”，或回到首页另记一段。", true);
+    return;
+  }
+  startingVoice = true;
+  if (draft) {
+    readEditor();
+    if (!await persistDraft(draft) && meaningful(draft)) { startingVoice = false; editorStatus("本机草稿暂时无法保存，请先留下当前文字，再接着说。", true); return; }
+  }
+  currentDraft = draft || newDraft({source: "voice"});
+  pendingVoice = null;
+  closePanels(); setVoiceState("starting");
+  const recordDraft = currentDraft;
+  let stream, meterContext;
+  try {
+    const Context = window.AudioContext || window.webkitAudioContext;
+    if (Context) { meterContext = new Context(); void meterContext.resume().catch(() => {}); }
+    stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true, channelCount: 1}});
+    // A backgrounded permission prompt must not start an invisible recording.
+    if (document.hidden) { stream.getTracks().forEach(track => track.stop()); await meterContext?.close(); setVoiceState("idle"); return; }
+    const types = ["audio/mp4", "audio/webm;codecs=opus", "audio/ogg;codecs=opus"];
+    const type = types.find(value => MediaRecorder.isTypeSupported?.(value));
+    const media = new MediaRecorder(stream, type ? {mimeType: type} : undefined);
+    const recording = {media, stream, draft: recordDraft, context: meterContext, chunks: [], elapsed: 0, started: performance.now(), active: true, keepOnly: false, discard: false, frame: null, tick: null, wakeLock: null};
+    capture = recording;
+    let analyser, samples;
+    if (meterContext) {
+      try { analyser = meterContext.createAnalyser(); analyser.fftSize = 256; meterContext.createMediaStreamSource(stream).connect(analyser); samples = new Uint8Array(analyser.fftSize); } catch { /* Recording remains available without a visual meter. */ }
+    }
+    let lastFrame = 0;
+    const animate = now => {
+      if (!recording.active) return;
+      if (now - lastFrame > 70) {
+        let amplitude = 0;
+        if (analyser && media.state === "recording") {
+          analyser.getByteTimeDomainData(samples);
+          let total = 0; for (const sample of samples) total += ((sample - 128) / 128) ** 2;
+          amplitude = Math.min(1, Math.sqrt(total / samples.length) * 5);
+        }
+        scene.style.setProperty("--level", amplitude.toFixed(3)); lastFrame = now;
+      }
+      recording.frame = requestAnimationFrame(animate);
+    };
+    media.addEventListener("dataavailable", event => { if (event.data.size) recording.chunks.push(event.data); });
+    media.addEventListener("error", () => { recording.keepOnly = true; finishRecording(); }, {once: true});
+    media.addEventListener("stop", () => { void completeRecording(recording); }, {once: true});
+    stream.getAudioTracks().forEach(track => track.addEventListener("ended", () => { if (recording.active) { recording.keepOnly = true; finishRecording(); } }, {once: true}));
+    media.start(1000);
+    recording.started = performance.now();
+    if (!draft) recordDraft.occurredAt = new Date().toISOString();
+    void locateDraft(recordDraft, false);
+    setVoiceState("recording"); $("recording-time").textContent = "0:00";
+    recording.frame = requestAnimationFrame(animate);
+    recording.tick = setInterval(() => {
+      const elapsed = recording.elapsed + (media.state === "recording" ? performance.now() - recording.started : 0);
+      $("recording-time").textContent = durationLabel(elapsed / 1000);
+      if (elapsed >= 59000) finishRecording();
+    }, 150);
+    if (navigator.wakeLock) {
+      void navigator.wakeLock.request("screen").then(lock => { if (recording.active) recording.wakeLock = lock; else void lock.release(); }).catch(() => {});
+    }
+  } catch (error) {
+    stream?.getTracks().forEach(track => track.stop());
+    void meterContext?.close().catch(() => {}); capture = null;
+    const denied = error.name === "NotAllowedError" || error.name === "SecurityError";
+    setVoiceState("error", denied ? "还没有麦克风权限，也可以先写几句。" : "暂时没能打开麦克风，请再点一次试试。");
+    $("voice-hint").textContent = denied ? "在浏览器的网站设置中允许麦克风后，就可以开始" : "检查麦克风是否被其他应用占用";
+    if (draft) { currentDraft = draft; openPanel("compose"); editorStatus(denied ? "没有麦克风权限，刚才写的还在。" : "暂时没能开始录音，刚才写的还在。", true); }
+  } finally { startingVoice = false; }
+}
+function finishRecording({keepOnly = false, discard = false} = {}) {
+  const recording = capture;
+  if (!recording || !recording.active || recording.media.state === "inactive") return;
+  if (recording.media.state === "recording") recording.elapsed += performance.now() - recording.started;
+  recording.keepOnly ||= keepOnly; recording.discard ||= discard;
+  recording.media.stop();
+  setVoiceState("processing", discard ? "正在结束录音…" : "把刚才的话留住…");
+}
+async function completeRecording(recording) {
+  recording.active = false;
+  clearInterval(recording.tick); cancelAnimationFrame(recording.frame);
+  if (capture === recording) capture = null;
+  recording.stream.getTracks().forEach(track => track.stop());
+  void recording.context?.close().catch(() => {});
+  void recording.wakeLock?.release().catch(() => {});
+  if (recording.discard) { setVoiceState("idle"); if (meaningful(recording.draft)) { currentDraft = recording.draft; openPanel("compose"); } return; }
+  const blob = new Blob(recording.chunks, {type: recording.media.mimeType || recording.chunks[0]?.type || "audio/webm"});
+  if (!blob.size) { setVoiceState("error", "这一段没有录到声音，再试一次就好。"); return; }
+  const draft = recording.draft;
+  draft.audio = blob; draft.audioApplied = false; draft.audioDuration = recording.elapsed / 1000; draft.source = "voice";
+  pendingVoice = draft; currentDraft = draft;
+  const stored = await persistDraft(draft);
+  if (recording.keepOnly || document.hidden) {
+    setVoiceState("idle");
+    if (!document.hidden) notice(stored ? "录音已留在本机草稿，随时可以继续。" : "录音暂时只能保留在当前页面，请不要关闭。");
+    return;
+  }
+  await transcribeDraft(draft);
+}
+$("voice-drop").addEventListener("click", () => { if (capture) finishRecording(); else void startRecording(); });
+$("history-record").addEventListener("click", () => { closePanels(); void startRecording(); });
+$("record").addEventListener("click", () => { readEditor(); void startRecording(currentDraft); });
+$("pause-recording").addEventListener("click", () => {
+  if (!capture?.active) return;
+  if (capture.media.state === "recording") {
+    capture.elapsed += performance.now() - capture.started; capture.media.pause(); setVoiceState("paused");
+  } else if (capture.media.state === "paused") {
+    capture.started = performance.now(); capture.media.resume(); setVoiceState("recording");
+  }
+});
+$("cancel-recording").addEventListener("click", async () => {
+  const recording = capture;
+  if (!recording) return;
+  const wasRecording = recording.media.state === "recording";
+  if (wasRecording) { recording.elapsed += performance.now() - recording.started; recording.media.pause(); setVoiceState("paused"); }
+  if (await ask("不留下这段声音？", "刚才这一段录音会被删除，已经写下的文字会保留。", "删除录音", "接着说")) finishRecording({discard: true});
+  else if (wasRecording && capture === recording && recording.active && recording.media.state === "paused") { recording.started = performance.now(); recording.media.resume(); setVoiceState("recording"); }
+});
+
+async function transcribeDraft(draft) {
+  if (!draft?.audio || draft.deleted || draft.saved || draft.transcribing || signingOut) return;
+  const version = ++voiceProcess;
+  pendingVoice = draft; draft.transcribing = true;
+  setVoiceState("processing");
+  if (currentPanel === "compose") { renderTranscriptionState(); $("save").disabled = true; $("record").disabled = true; }
+  try {
+    const prepared = await window.DropAudio.prepare(draft.audio);
+    const upload = await api("integrations/audio-upload/", {method: "POST", body: {extension: prepared.extension}});
+    const body = new FormData(); body.append("key", upload.key); body.append("token", upload.token); body.append("file", prepared.blob, "drop.wav");
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 60000);
+    try {
+      const response = await fetch(upload.url, {method: "POST", body, signal: controller.signal});
+      if (!response.ok) throw new Error("录音没能上传成功，原录音还在，可以再试一次。");
+    } finally { clearTimeout(timer); }
+    $("voice-status").textContent = "正在把声音写下来…";
+    $("voice-hint").textContent = localFailures.has(draft.id) ? "请暂时不要关闭页面" : "录音已留在本机，转写后还能修改";
+    const result = await api("integrations/transcribe/", {method: "POST", body: {ticket: upload.ticket}, timeout: 95000});
+    if (version !== voiceProcess || draft.saved || draft.deleted || signingOut) return;
+    if (!result.text?.trim()) throw new Error("没有听清这一段。可以再转一次，也可以听着录音写几句。");
+    draft.text = [draft.text?.trim(), result.text.trim()].filter(Boolean).join("\n");
+    draft.audioApplied = true; delete draft.transcribing;
+    await persistDraft(draft);
+    setVoiceState("idle"); pendingVoice = null;
+    if (!document.hidden) {
+      if (currentPanel === "compose" && currentDraft?.id === draft.id) {
+        const position = $("text").selectionStart;
+        const typing = document.activeElement === $("text");
+        $("text").value = draft.text; resizeEditor(); setupPlayback(); renderTranscriptionState();
+        if (typing) $("text").setSelectionRange(position, position);
+        editorStatus(localFailures.has(draft.id) ? "本机草稿未能保存，请不要关闭页面。" : "草稿留在本机 · 仅自己可见", localFailures.has(draft.id));
+      } else if (!currentPanel) {
+        currentDraft = draft; openPanel("compose"); $("capture-title").focus({preventScroll: true});
+      } else {
+        if (currentPanel === "drafts") renderDrafts();
+        notice("声音已转成文字，草稿里可以继续写。");
+      }
+    }
+  } catch (error) {
+    if (version !== voiceProcess || draft.deleted || signingOut) return;
+    delete draft.transcribing;
+    await persistDraft(draft);
+    const text = error.name === "AbortError" || error instanceof TypeError ? "连接中断了，录音还在，可以再试一次。" : message(error);
+    setVoiceState("error", text);
+    if (currentPanel === "compose" && currentDraft?.id === draft.id) {
+      renderTranscriptionState(); $("draft-transcription-status").textContent = text;
+    }
+  } finally {
+    delete draft.transcribing;
+    if (version === voiceProcess && currentPanel === "compose") { $("save").disabled = false; $("record").disabled = false; }
+  }
+}
+$("voice-retry").addEventListener("click", () => { if (pendingVoice) void transcribeDraft(pendingVoice); });
+$("voice-later").addEventListener("click", () => { currentDraft = pendingVoice; setVoiceState("idle"); if (currentDraft) openPanel("compose"); });
+$("retry-transcription").addEventListener("click", () => { readEditor(); if (currentDraft) void transcribeDraft(currentDraft); });
+
+function stopPlayback() {
+  if (audioPlayer) { audioPlayer.pause(); audioPlayer.removeAttribute("src"); audioPlayer.load(); audioPlayer = null; }
+  if (audioURL) { URL.revokeObjectURL(audioURL); audioURL = null; }
+}
+function setupPlayback() {
+  stopPlayback();
+  const draft = currentDraft;
+  $("audio-preview").hidden = !draft?.audio; $("audio-note").hidden = !draft?.audio;
+  if (!draft?.audio) return;
+  audioURL = URL.createObjectURL(draft.audio); audioPlayer = new Audio(audioURL);
+  const player = audioPlayer;
+  $("audio-play").setAttribute("aria-label", "播放这段录音"); $("audio-play").querySelector("use").setAttribute("href", "#i-play");
+  $("audio-seek").value = 0; $("audio-duration").textContent = durationLabel(draft.audioDuration || 0);
+  player.addEventListener("timeupdate", () => {
+    const duration = Number.isFinite(player.duration) ? player.duration : draft.audioDuration || 0;
+    $("audio-seek").value = duration ? String(player.currentTime / duration * 100) : 0;
+    $("audio-duration").textContent = durationLabel(player.currentTime || duration);
+  });
+  const sync = () => { $("audio-play").setAttribute("aria-label", player.paused ? "播放这段录音" : "暂停播放"); $("audio-play").querySelector("use").setAttribute("href", player.paused ? "#i-play" : "#i-pause"); };
+  player.addEventListener("play", sync); player.addEventListener("pause", sync); player.addEventListener("ended", sync);
+  player.addEventListener("error", () => editorStatus("这段录音暂时无法播放，仍可尝试转写。", true));
+}
+$("audio-play").addEventListener("click", () => { if (!audioPlayer) return; if (audioPlayer.paused) void audioPlayer.play().catch(() => editorStatus("暂时无法播放，请再点一次。", true)); else audioPlayer.pause(); });
+$("audio-seek").addEventListener("input", () => { if (audioPlayer) { const duration = Number.isFinite(audioPlayer.duration) ? audioPlayer.duration : currentDraft?.audioDuration || 0; audioPlayer.currentTime = Number($("audio-seek").value) / 100 * duration; } });
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    if (capture?.active) finishRecording({keepOnly: true});
+    if (currentPanel === "compose" && currentDraft) { readEditor(); void persistDraft(currentDraft); }
+    for (const id of [...draftTimers.keys()]) { const draft = drafts.get(id) || (currentDraft?.id === id ? currentDraft : null); if (draft) void persistDraft(draft); }
+    audioPlayer?.pause();
+  } else {
+    updateHomeDate();
+  }
+});
+window.addEventListener("beforeunload", event => {
+  if (capture?.active || startingVoice || saving || pendingWrites || localFailures.size || draftTimers.size) {
+    if (currentPanel === "compose" && currentDraft) { readEditor(); void persistDraft(currentDraft); }
+    event.preventDefault(); event.returnValue = "";
+  }
+});
+
+async function searchEntries() {
+  const term = $("search-text").value.trim(), version = ++searchVersion;
+  $("clear-search").hidden = !term;
+  if (!term) { $("search-results").replaceChildren(); $("search-status").textContent = "记得的一个词，也能找到那一天。"; return; }
+  $("search-status").textContent = "正在找回那个片刻…";
+  try {
+    const {entries} = await api("entries/?" + new URLSearchParams({q: term}));
+    if (version !== searchVersion) return;
+    renderEntries($("search-results"), entries, {search: true});
+    $("search-status").textContent = entries.length === 60 ? "找到最近 60 个片刻，可以换一个更具体的词。" : entries.length ? `找到了 ${entries.length} 个片刻` : "还没有找到，试试更短的词或当时的地点。";
+  } catch (error) { if (version === searchVersion) { $("search-results").replaceChildren(); $("search-status").textContent = message(error); } }
+}
+$("search-form").addEventListener("submit", event => { event.preventDefault(); clearTimeout(searchTimer); void searchEntries(); $("search-text").blur(); });
+$("search-text").addEventListener("input", () => { ++searchVersion; clearTimeout(searchTimer); searchTimer = setTimeout(searchEntries, 280); $("clear-search").hidden = !$("search-text").value; });
+$("clear-search").addEventListener("click", () => { $("search-text").value = ""; clearTimeout(searchTimer); void searchEntries(); $("search-text").focus(); });
+
+async function loadCalendar() {
+  const day = $("date").value || dateKey(), version = ++calendarVersion;
+  $("calendar-date").textContent = dayFormat.format(dayDate(day)) + " · " + weekdayFormat.format(dayDate(day));
+  $("events").replaceChildren(node("p", "正在读取这一天的日程…", "supporting"));
+  $("archive-footer").hidden = true;
+  try {
+    const {events} = await api("integrations/calendar/?" + new URLSearchParams({date: day, tz}));
+    if (version !== calendarVersion) return;
+    dayEvents = events;
+    $("events").replaceChildren(...events.map((event, index) => {
+      const row = node("div", undefined, "calendar-event");
+      const label = node("label"), check = node("input"); check.type = "checkbox"; check.value = index;
+      const archived = dayEntries.some(entry => entry.archived && entry.event?.id === event.id);
+      check.disabled = archived;
+      const text = node("span");
+      text.append(node("span", event.title, "event-title"), node("small", (event.all_day ? "全天" : clockFormat.format(new Date(event.start))) + (archived ? " · 已留在日记里" : "")));
+      label.append(check, text);
+      check.addEventListener("change", () => { $("archive").disabled = !$("events").querySelector("input:checked"); });
+      const write = button("写感受", () => { void openNewEditor({event}); });
+      row.append(label, write); return row;
+    }));
+    if (!events.length) $("events").append(node("p", "这一天没有日程。那些计划之外的片刻，也值得留下。", "supporting"));
+    $("archive-footer").hidden = !events.length; $("archive").disabled = true;
+  } catch (error) {
+    if (version !== calendarVersion) return;
+    const connect = error.code === "calendar_connect_required" || error.code === "calendar_access_denied";
+    const box = node("div", undefined, "calendar-connect");
+    box.append(node("h3", connect ? "把日程带进日记" : "日程暂时没有载入"), node("p", message(error)));
+    if (connect) {
+      const link = node("a", "连接 Chronelle", "primary"); link.href = apiOrigin + "/api/integrations/chronelle/connect/"; box.append(link);
+      box.append(node("p", "仅申请只读权限，你可以选择允许读取的分组。", "supporting"));
+    } else box.append(button("再试一次", () => void loadCalendar(), "soft"));
+    $("events").replaceChildren(box);
+  }
+}
+$("archive").addEventListener("click", () => void run($("archive"), async () => {
+  const events = [...$("events").querySelectorAll("input:checked")].map(input => dayEvents[Number(input.value)]);
+  if (!events.length) return;
+  await api("calendar/archive/", {method: "POST", body: {events, tz}});
+  monthCache.clear(); await loadDay(); await loadCalendar(); void refreshHome(); notice("日程已留在日记里，可以慢慢补上感受。");
+}));
+
+function sharePool() {
+  const entries = [...dayEntries];
+  if (shareContextEntry) entries.unshift(shareContextEntry);
+  return [...new Map(entries.map(entry => [entry.id, entry])).values()];
+}
+function updateShareSelection() {
+  $("share-count").textContent = selected.size ? `已选 ${selected.size} 个片刻` : "还没有选择记录";
+  $("create-share").disabled = !selected.size || !$("share-form").querySelector('input[name="fields"]:checked');
+  $("select-all").textContent = sharePool().length && selected.size === sharePool().length ? "取消全选" : "全选";
+}
+function renderShare() {
+  const entries = sharePool();
+  const valid = new Set(entries.map(entry => entry.id));
+  for (const id of selected) if (!valid.has(id)) selected.delete(id);
+  $("share-entries").replaceChildren(...entries.map(entry => {
+    const label = node("label", undefined, "share-choice"), check = node("input");
+    check.type = "checkbox"; check.checked = selected.has(entry.id);
+    check.addEventListener("change", () => { if (check.checked) selected.add(entry.id); else selected.delete(entry.id); updateShareSelection(); });
+    const text = node("span"); text.append(node("p", entry.text || eventName(entry.event) || "日程片刻"), node("small", momentLabel(entry.occurred_at)));
+    label.append(check, text); return label;
+  }));
+  if (!entries.length) $("share-entries").append(node("p", "这一天还没有记录。先留下一个片刻，再决定分享给谁。", "supporting"));
+  $("select-all").hidden = !entries.length;
+  updateShareSelection();
+}
+$("read-share").addEventListener("click", () => { shareContextEntry = currentEntry; selected.clear(); selected.add(currentEntry.id); $("share-result").replaceChildren(); openPanel("share"); });
+$("select-all").addEventListener("click", () => {
+  const entries = sharePool(), all = selected.size === entries.length;
+  selected.clear(); if (!all) entries.forEach(entry => selected.add(entry.id)); renderShare();
+});
+$("share-form").addEventListener("change", updateShareSelection);
+async function copyAddress(url, control) {
+  try { await navigator.clipboard.writeText(url); control.textContent = "已复制"; }
+  catch { const link = control.parentElement.querySelector("a"); if (link) { const range = document.createRange(); range.selectNodeContents(link); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); } notice("可以长按或选中链接复制。"); }
+}
+$("share-form").addEventListener("submit", event => {
+  event.preventDefault();
+  void run($("create-share"), async () => {
+    const form = new FormData($("share-form"));
+    const fields = form.getAll("fields").flatMap(field => field === "coordinates" ? ["latitude", "longitude"] : [field]);
+    if (!selected.size || !fields.length) return;
+    const result = await api("shares/", {method: "POST", body: {entry_ids: [...selected], fields, expires_in: Number(form.get("expires_in"))}});
+    const url = new URL(result.url, location.origin).href;
+    const link = node("a", url); link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer";
+    const copy = button("复制链接", control => void copyAddress(url, control), "primary");
+    const nodes = [node("h3", "分享链接准备好了"), node("p", `有效至 ${new Date(result.expires_at).toLocaleString("zh-CN")}`, "supporting"), link, copy];
+    if (navigator.share) nodes.push(button("分享给…", async () => { try { await navigator.share({title: "一滴 · 生活的片刻", url}); } catch (error) { if (error.name !== "AbortError") notice("可以复制链接后分享。"); } }));
+    $("share-result").replaceChildren(...nodes); $("share-result").scrollIntoView({block: "nearest"});
+  }).finally(updateShareSelection);
+});
+async function refreshLinks() {
+  $("links-list").textContent = "正在读取分享链接…";
+  const names = {text: "正文", occurred_at: "时间", city: "城市", place: "地点", latitude: "纬度", longitude: "经度", event: "日程"};
+  try {
+    const {shares} = await api("shares/");
+    $("links-list").replaceChildren(...shares.map(share => {
+      const expired = new Date(share.expires_at) <= new Date();
+      const row = node("div", undefined, "link-row");
+      row.append(node("p", share.fields.map(field => names[field] || field).join(" · ")), node("p", expired ? "已到期" : "有效至 " + new Date(share.expires_at).toLocaleString("zh-CN"), "supporting"));
+      const actions = node("div", undefined, "link-actions");
+      if (!expired) {
+        const open = node("a", "查看分享"); open.href = share.url; open.target = "_blank"; open.rel = "noopener noreferrer";
+        actions.append(open, button("复制", control => void copyAddress(share.url, control)));
+      }
+      const revoke = button(expired ? "移除" : "撤销链接", async control => {
+        if (!expired && !await ask("撤销这个分享链接？", "撤销后，持有这个链接的人将无法再查看这些记录。你的日记会保留。", "撤销链接", "保留链接")) return;
+        await run(control, async () => { await api("shares/" + share.id + "/", {method: "DELETE"}); $("share-result").replaceChildren(); await refreshLinks(); notice("这个链接已撤销。"); });
+      }, "quiet destructive");
+      actions.append(revoke); row.append(actions); return row;
+    }));
+    if (!shares.length) $("links-list").append(node("p", "还没有分享链接。想分享时，从一条记录开始就好。", "supporting"));
+  } catch (error) { $("links-list").textContent = message(error); }
+}
+
+function updateHomeDate() {
+  const today = new Date();
+  $("home-date").textContent = today.getFullYear() + " 年 · " + dayFormat.format(today) + " · " + weekdayFormat.format(today);
+}
+function renderNetwork() {
+  $("network-state").hidden = navigator.onLine && !sessionExpired;
+  if (sessionExpired) {
+    const link = node("a", "重新登录"); link.href = apiOrigin + "/api/integrations/frienden/login/";
+    $("network-state").replaceChildren(node("span", "登录状态有变化，本机草稿还在。 "), link);
+  } else $("network-state").textContent = "暂时离线，写下的话会保留为本机草稿";
+}
+window.addEventListener("online", renderNetwork); window.addEventListener("offline", renderNetwork);
+$("auto-location").addEventListener("change", async () => {
+  autoLocation = $("auto-location").checked;
+  try { localStorage.setItem("drop-location:" + session.user_id, String(autoLocation)); } catch { /* Session preference still works. */ }
+  if (!autoLocation) { locationVersion++; $("location-setting-status").textContent = "之后的记录将不再自动附上位置。"; return; }
+  $("location-setting-status").textContent = "请允许浏览器使用位置；不允许也不影响记录。";
+  if (!navigator.geolocation) { $("location-setting-status").textContent = "这个浏览器暂时无法获取位置。"; return; }
+  navigator.geolocation.getCurrentPosition(() => { $("location-setting-status").textContent = "已允许，之后记录时会自动附上位置。"; }, () => { $("location-setting-status").textContent = "还没有获得位置权限。随时可以再开启。"; }, {timeout: 10000});
+});
+$("logout").addEventListener("click", async () => {
+  if (saving || signingOut) return;
+  if (drafts.size && !await ask("退出并清除本机草稿？", `还有 ${drafts.size} 份草稿只在这个浏览器里。退出会清除这些草稿，已保存的日记仍在账号中。`, "退出并清除", "继续留着")) return;
+  await run($("logout"), async () => {
+    closingPanel = true;
+    locationVersion++; voiceProcess++;
+    for (const draft of drafts.values()) delete draft.transcribing;
+    for (const id of [...draftTimers.keys()]) { const draft = drafts.get(id) || (currentDraft?.id === id ? currentDraft : null); if (draft) await persistDraft(draft); }
+    await draftWrite.catch(() => {});
+    signingOut = true; closingPanel = false;
+    try {
+      await api("logout/", {method: "POST"});
+      let cleared = true;
+      try { await store?.clear(); } catch { cleared = false; }
+      localFailures.clear(); drafts.clear(); currentDraft = null; pendingVoice = null; closePanels();
+      if (cleared) location.reload();
+      else {
+        $("journal").hidden = true; $("account-button").hidden = true; $("guest").hidden = false;
+        notice("已退出登录，但本机草稿没能清除。可在浏览器设置中清除此站点的数据。");
+      }
+    } catch (error) { signingOut = false; setVoiceState("idle"); throw error; }
+  });
+});
+$("dev-login").addEventListener("click", () => void run($("dev-login"), async () => { await api("dev-login/", {method: "POST"}); location.reload(); }));
+let booting = false;
+async function start() {
+  if (booting) return;
+  booting = true;
+  $("loading").hidden = false; $("retry-session").hidden = true;
+  $("loading-text").textContent = "正在打开你的一滴…";
+  try {
+    const token = document.body.dataset.shareToken || new URLSearchParams(location.search).get("share");
+    if (token) {
+      $("loading").hidden = true; $("public").hidden = false;
+      $("public-state").textContent = "正在打开分享的片刻…";
+      try {
+        const {entries} = await api("public/shares/" + encodeURIComponent(token) + "/");
+        renderEntries($("public-entries"), entries, {publicView: true});
+        $("public-state").textContent = entries.length ? "" : "这里暂时没有可见的记录。";
+      } catch (error) { $("public-state").textContent = error.status === 404 ? "这个分享已结束，或链接已被撤销。" : message(error); }
+      return;
+    }
+    session = await api("session/"); csrfToken = session.csrf_token; sessionExpired = false;
+    $("loading").hidden = true;
+    if (!session.authenticated) { $("guest").hidden = false; $("dev-login").hidden = !session.dev_login; return; }
+    $("guest").hidden = true;
+    $("identity").textContent = session.display_name || "我的一滴";
+    if (session.avatar_url) {
+      const avatar = node("img"); avatar.alt = ""; avatar.referrerPolicy = "no-referrer";
+      avatar.addEventListener("error", () => avatar.remove(), {once: true}); avatar.src = session.avatar_url;
+      $("identity").prepend(avatar);
+      const small = avatar.cloneNode(); small.addEventListener("error", () => { small.replaceWith(icon("user")); }, {once: true});
+      $("account-button").replaceChildren(small);
+    }
+    $("account-button").hidden = false; $("journal").hidden = false;
+    try {
+      store = await window.DropDrafts.open(String(session.user_id || ""));
+      const saved = await store.all();
+      saved.forEach(draft => { if (!draft.saved) { delete draft.transcribing; drafts.set(draft.id, draft); } else void store.remove(draft.id); });
+    } catch { notice("这个浏览器暂时无法读取本机草稿，写完后请及时保存。" ); }
+    try { autoLocation = localStorage.getItem("drop-location:" + session.user_id) !== "false"; } catch { autoLocation = true; }
+    $("auto-location").checked = autoLocation;
+    renderDraftSummary(); updateHomeDate(); renderNetwork();
+    $("date").value = dateKey();
+    void loadDay(); void refreshHome();
+    const url = new URL(location.href), outcome = url.searchParams.get("chronelle");
+    if (outcome) {
+      url.searchParams.delete("chronelle"); history.replaceState(null, "", url);
+      openPanel("calendar");
+      $("calendar").querySelector(".panel-status").textContent = {connected: "Chronelle 已连接，可以把日程留进日记了。", denied: "这次没有连接，随时可以再试。", failed: "暂时没能连接，请重新授权。"}[outcome] || "";
+    }
+  } catch (error) {
+    $("loading").hidden = false; $("loading-text").textContent = message(error); $("retry-session").hidden = false;
+  } finally { booting = false; }
+}
+$("retry-session").addEventListener("click", () => void start());
+if (window.visualViewport) {
+  const adjustViewport = () => {
+    document.documentElement.style.setProperty("--visual-height", window.visualViewport.height + "px");
+    document.documentElement.style.setProperty("--keyboard-offset", Math.max(0, window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop) + "px");
+  };
+  window.visualViewport.addEventListener("resize", adjustViewport); window.visualViewport.addEventListener("scroll", adjustViewport); adjustViewport();
+}
+// Swiping the header down is an alternative to its visible back/close control.
+document.querySelectorAll(".panel-header").forEach(header => {
+  let startPoint;
+  header.addEventListener("touchstart", event => { if (!event.target.closest("button") && event.touches.length === 1) startPoint = {x: event.touches[0].clientX, y: event.touches[0].clientY}; }, {passive: true});
+  header.addEventListener("touchend", event => {
+    const end = event.changedTouches[0];
+    if (startPoint && end.clientY - startPoint.y > 85 && Math.abs(end.clientX - startPoint.x) < 70) void backPanel();
+    startPoint = null;
+  }, {passive: true});
+});
+void start();
