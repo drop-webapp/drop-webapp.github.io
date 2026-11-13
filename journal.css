@@ -109,3 +109,7 @@ fieldset label, #events label { min-height: 44px; align-content: center; }
   .spread { gap: 1.5rem; }
   #identity { max-width: 45%; }
 }
+
+.editor-controls { border: 0; padding: 0; margin: 0; min-inline-size: 0; }
+#editor-status { margin: .35rem 0 0; font-size: .9rem; }
+#editor-status:empty { margin: 0; }

@@ -27,6 +27,39 @@ let editorVersion = 0;
 let loadVersion = 0;
 let recorder = null;
 let recordingBusy = false;
+let saving = false;
+let editorBaseline = editorSnapshot();
+let unloadWarning = false;
+
+function editorSnapshot() {
+  return JSON.stringify([
+    ...["text", "occurred_at", "city", "place", "event"].map((name) => editor.elements[name].value),
+    coordinates,
+  ]);
+}
+
+function preventDraftLoss(event) {
+  event.preventDefault();
+  event.returnValue = true;
+}
+
+function syncDraftWarning() {
+  const dirty = saving || editorSnapshot() !== editorBaseline;
+  if (dirty === unloadWarning) return;
+  unloadWarning = dirty;
+  if (dirty) window.addEventListener("beforeunload", preventDraftLoss);
+  else window.removeEventListener("beforeunload", preventDraftLoss);
+}
+
+function confirmDiscard() {
+  return !saving && (editorSnapshot() === editorBaseline || window.confirm("放弃未保存的修改？"));
+}
+
+function editorStatus(message = "", failed = false) {
+  const status = $("editor-status");
+  status.textContent = message;
+  status.classList.toggle("destructive", failed);
+}
 
 function element(tag, value, className) {
   const node = document.createElement(tag);
@@ -117,7 +150,11 @@ function renderEntries(target, entries, isPublic = false) {
     if (!isPublic) {
       const actions = element("div", undefined, "note-actions");
       const remove = button("删除", (control) => {
-        if (!window.confirm("删除这条记录？")) return;
+        if (saving) return;
+        const message = editing?.id === entry.id && editorSnapshot() !== editorBaseline
+          ? "删除这条记录并放弃未保存的修改？"
+          : "删除这条记录？";
+        if (!window.confirm(message)) return;
         return run(control, async () => {
           await api("entries/" + entry.id + "/", {method: "DELETE"});
           selected.delete(entry.id);
@@ -156,6 +193,7 @@ function renderEntries(target, entries, isPublic = false) {
 
 function showCoordinates(value) {
   coordinates = value;
+  syncDraftWarning();
   $("coordinates").value = value ? value.latitude.toFixed(5) + ", " + value.longitude.toFixed(5) : "";
   $("clear-location").hidden = !value;
 }
@@ -186,9 +224,13 @@ function resetEditor() {
   $("capture-title").textContent = "写日记";
   $("save").textContent = "记一滴";
   $("cancel").hidden = true;
+  editorBaseline = editorSnapshot();
+  syncDraftWarning();
 }
 
 function editEntry(entry) {
+  if (!confirmDiscard()) return;
+  editorStatus();
   editorVersion += 1;
   editing = entry;
   editor.elements.text.required = !entry.archived;
@@ -207,6 +249,8 @@ function editEntry(entry) {
   $("capture-title").textContent = "编辑记录";
   $("save").textContent = "保存修改";
   $("cancel").hidden = false;
+  editorBaseline = editorSnapshot();
+  syncDraftWarning();
   editor.elements.text.focus();
 }
 
@@ -296,41 +340,61 @@ async function refreshLinks() {
 
 editor.addEventListener("submit", (event) => {
   event.preventDefault();
-  run($("save"), async () => {
-    const fields = editor.elements;
-    const text = fields.text.value.trim();
-    if (!text && !editing?.archived) throw new Error("请输入记录正文。");
-    const enteredAt = fields.occurred_at.value;
-    const originalTime = editing && enteredAt === localDateTime(editing.occurred_at);
-    const occurredAt = originalTime ? editing.occurred_at : new Date(enteredAt || Date.now()).toISOString();
-    const choice = fields.event.value;
-    const version = editorVersion;
-    const body = {
-      text,
-      occurred_at: occurredAt,
-      city: fields.city.value.trim(),
-      place: fields.place.value.trim(),
-      latitude: coordinates?.latitude ?? null,
-      longitude: coordinates?.longitude ?? null,
-      event: fields.event.eventById.get(choice) ?? null,
-    };
-    if (editing?.archived) {
-      delete body.occurred_at;
-      delete body.event;
+  if (saving) return;
+  if (recordingBusy || $("locate").disabled) {
+    editorStatus("请先完成语音转写或定位，再保存。", true);
+    return;
+  }
+  saving = true;
+  $("editor-controls").disabled = true;
+  editorStatus("正在保存…");
+  syncDraftWarning();
+  void (async () => {
+    try {
+      const fields = editor.elements;
+      const text = fields.text.value.trim();
+      if (!text && !editing?.archived) throw new Error("请输入记录正文。");
+      const enteredAt = fields.occurred_at.value;
+      const originalTime = editing && enteredAt === localDateTime(editing.occurred_at);
+      const occurredAt = originalTime ? editing.occurred_at : new Date(enteredAt || Date.now()).toISOString();
+      const choice = fields.event.value;
+      const version = editorVersion;
+      const body = {
+        text,
+        occurred_at: occurredAt,
+        city: fields.city.value.trim(),
+        place: fields.place.value.trim(),
+        latitude: coordinates?.latitude ?? null,
+        longitude: coordinates?.longitude ?? null,
+        event: fields.event.eventById.get(choice) ?? null,
+      };
+      if (editing?.archived) {
+        delete body.occurred_at;
+        delete body.event;
+      }
+      const path = editing ? "entries/" + editing.id + "/" : "entries/";
+      await api(path, {method: editing ? "PATCH" : "POST", body});
+      if (editorVersion === version) resetEditor();
+      const day = dateKey(occurredAt);
+      await setDay(day, day !== $("date").value);
+      editorStatus("已保存。");
+    } catch (error) {
+      editorStatus(error instanceof TypeError ? "无法连接服务器，内容已保留。请重试。" : error.message, true);
+    } finally {
+      saving = false;
+      $("editor-controls").disabled = false;
+      syncDraftWarning();
     }
-    const path = editing ? "entries/" + editing.id + "/" : "entries/";
-    await api(path, {method: editing ? "PATCH" : "POST", body});
-    if (editorVersion === version) resetEditor();
-    const day = dateKey(occurredAt);
-    await setDay(day, day !== $("date").value);
-    notice("已保存。");
-  });
+  })();
 });
 
 $("cancel").addEventListener("click", () => {
+  if (!confirmDiscard()) return;
   resetEditor();
+  editorStatus();
   editor.elements.text.focus();
 });
+editor.addEventListener("input", syncDraftWarning);
 $("write").addEventListener("click", () => editor.elements.text.focus());
 $("retry-day").addEventListener("click", loadDay);
 $("share-form").addEventListener("change", updateShareSelection);
@@ -422,6 +486,7 @@ $("record").addEventListener("click", async () => {
           if (!text?.trim()) throw new Error("未识别到文字。");
           const input = editor.elements.text;
           input.value = [input.value, text].filter(Boolean).join("\n");
+          syncDraftWarning();
           input.focus();
         } finally {
           recordingBusy = false;
@@ -445,10 +510,14 @@ $("record").addEventListener("click", async () => {
   }
 });
 
-$("logout").addEventListener("click", () => run($("logout"), async () => {
-  await api("logout/", {method: "POST"});
-  location.reload();
-}));
+$("logout").addEventListener("click", () => {
+  if (!confirmDiscard()) return;
+  return run($("logout"), async () => {
+    await api("logout/", {method: "POST"});
+    window.removeEventListener("beforeunload", preventDraftLoss);
+    location.reload();
+  });
+});
 $("dev-login").addEventListener("click", () => run($("dev-login"), async () => {
   await api("dev-login/", {method: "POST"});
   location.reload();
