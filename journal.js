@@ -224,6 +224,7 @@ function resetEditor() {
   $("capture-title").textContent = "写日记";
   $("save").textContent = "记一滴";
   $("cancel").hidden = true;
+  $("backdate").hidden = !$("date").value || $("date").value >= dateKey();
   editorBaseline = editorSnapshot();
   syncDraftWarning();
 }
@@ -249,6 +250,7 @@ function editEntry(entry) {
   $("capture-title").textContent = "编辑记录";
   $("save").textContent = "保存修改";
   $("cancel").hidden = false;
+  $("backdate").hidden = true;
   editorBaseline = editorSnapshot();
   syncDraftWarning();
   editor.elements.text.focus();
@@ -261,6 +263,8 @@ async function loadDay() {
   $("day-title").textContent = dayFormatter.format(date);
   $("year").textContent = String(date.getFullYear());
   $("today").hidden = day === dateKey();
+  $("backdate").hidden = day >= dateKey() || Boolean(editing);
+  $("backdate").textContent = "补记 " + dayFormatter.format(date);
   $("retry-day").hidden = true;
   $("entry-state").textContent = "正在读取记录…";
   $("entries").replaceChildren();
@@ -376,8 +380,8 @@ editor.addEventListener("submit", (event) => {
       await api(path, {method: editing ? "PATCH" : "POST", body});
       if (editorVersion === version) resetEditor();
       const day = dateKey(occurredAt);
-      await setDay(day, day !== $("date").value);
       editorStatus("已保存。");
+      void setDay(day, day !== $("date").value);
     } catch (error) {
       editorStatus(error instanceof TypeError ? "无法连接服务器，内容已保留。请重试。" : error.message, true);
     } finally {
@@ -394,7 +398,24 @@ $("cancel").addEventListener("click", () => {
   editorStatus();
   editor.elements.text.focus();
 });
-editor.addEventListener("input", syncDraftWarning);
+editor.addEventListener("input", () => {
+  syncDraftWarning();
+  if ($("editor-status").textContent === "已保存。") editorStatus();
+});
+editor.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey) ||
+      event.isComposing || event.target !== editor.elements.text) return;
+  event.preventDefault();
+  if (!event.repeat && !saving) editor.requestSubmit($("save"));
+});
+$("backdate").addEventListener("click", () => {
+  const time = editor.elements.occurred_at;
+  const clock = time.value.slice(11) || localDateTime(Date.now()).slice(11);
+  time.value = $("date").value + "T" + clock;
+  $("details").open = true;
+  syncDraftWarning();
+  editor.elements.text.focus();
+});
 $("write").addEventListener("click", () => editor.elements.text.focus());
 $("retry-day").addEventListener("click", loadDay);
 $("share-form").addEventListener("change", updateShareSelection);
