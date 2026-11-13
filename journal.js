@@ -10,6 +10,7 @@ const timeFormatter = new Intl.DateTimeFormat("zh-CN", {hour: "2-digit", minute:
 const selected = new Set();
 const errorMessages = {
   authentication_required: "请重新登录。",
+  calendar_connect_required: "请连接 Chronelle，选择可读取的日程分组。",
   calendar_not_configured: "日程服务尚未配置。",
   calendar_access_denied: "当前账号无法读取日程。",
   invalid_date_or_timezone: "无法识别所选日期或时区。",
@@ -315,7 +316,13 @@ async function loadDay() {
       renderEventOptions();
       renderCalendar(events);
     }).catch((error) => {
-      if (version === loadVersion) $("events").textContent = error.message;
+      if (version !== loadVersion) return;
+      $("events").textContent = error.message;
+      if (error.message === errorMessages.calendar_connect_required) {
+        const connect = element("a", "连接 Chronelle", "primary");
+        connect.href = apiOrigin + "/api/integrations/chronelle/connect/";
+        $("events").append(element("br"), connect);
+      }
     }),
   ]);
 }
@@ -718,5 +725,15 @@ async function start() {
   $("journal").hidden = false;
   resetEditor();
   await setDay(dateKey());
+  const url = new URL(location.href);
+  const outcome = url.searchParams.get("chronelle");
+  if (outcome) {
+    url.searchParams.delete("chronelle");
+    history.replaceState(null, "", url);
+    openPanel("calendar");
+    $("calendar").querySelector(".panel-status").textContent = {
+      connected: "已连接 Chronelle。", denied: "已取消 Chronelle 授权。", failed: "连接失败，请重新授权。",
+    }[outcome] || "";
+  }
 }
 start().catch((error) => notice(error.message));
