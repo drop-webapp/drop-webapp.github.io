@@ -7,8 +7,8 @@
   <meta name="theme-color" content="#f4eff9">
   <link rel="icon" type="image/png" href="./drop-icon.png?v=5ad550d3fba9">
   <title>一滴 Drop</title>
-  <link rel="stylesheet" href="./journal.css?v=f1977c52014a">
-  <script src="./journal.js?v=16ea88c869f6" defer></script>
+  <link rel="stylesheet" href="./journal.css?v=3c6d2e2dc3d3">
+  <script src="./journal.js?v=7cd169f7d58f" defer></script>
 </head>
 <body data-api-origin="https://api.drop.jyonn.space" data-share-token="">
   <header class="masthead wrap">
@@ -27,8 +27,38 @@
     </section>
     <section id="journal" hidden>
       <div class="spread">
-        <section class="capture" aria-labelledby="capture-title">
-          <h2 id="capture-title">写日记</h2>
+        <section class="recall" aria-labelledby="day-title">
+          <div class="date-row">
+            <h1 id="day-title"></h1>
+            <span id="year"></span>
+          </div>
+          <nav class="date-tools" aria-label="选择回顾日期">
+            <button type="button" id="prev" aria-label="前一天">←</button>
+            <input type="hidden" id="date"><button type="button" id="open-date" aria-expanded="false" aria-controls="date-panel">选日期</button>
+            <button type="button" id="next" aria-label="后一天">→</button>
+            <button type="button" id="today" class="quiet">回到今天</button>
+            <button type="button" id="write" class="primary">写一条</button>
+            <button type="button" data-open="search">搜索</button>
+            <button type="button" data-open="calendar">日程</button>
+            <button type="button" data-open="share">分享<span id="share-badge"></span></button>
+          </nav>
+          <section id="date-panel" class="date-panel" aria-label="选择日期" hidden>
+            <div class="date-tools"><button id="prev-month" aria-label="上个月">‹</button><strong id="month-label" aria-live="polite"></strong><button id="next-month" aria-label="下个月">›</button></div>
+            <div class="month-grid" id="month-days"></div>
+          </section>
+          <div id="daily-view">
+          <p id="entry-state" role="status"></p>
+          <button type="button" id="retry-day" class="quiet" hidden>重新载入</button>
+          <div class="waterfall" id="entries"></div>
+
+          </div>
+        </section>
+      </div>
+    </section>
+<dialog id="compose" class="panel sheet" aria-labelledby="capture-title">
+<header class="panel-header"><h2 id="capture-title">写日记</h2><button type="button" data-close="compose">关闭</button></header>
+        <section class="capture" aria-label="编辑器">
+
           <form id="editor">
             <fieldset id="editor-controls" class="editor-controls" aria-label="日记内容">
               <label class="sr-only" for="text">记录正文</label>
@@ -58,38 +88,33 @@
             <p id="editor-status" role="status"></p>
           </form>
         </section>
-        <section class="recall" aria-labelledby="day-title">
-          <div class="date-row">
-            <h1 id="day-title"></h1>
-            <span id="year"></span>
-          </div>
-          <nav class="date-tools" aria-label="选择回顾日期">
-            <button type="button" id="prev" aria-label="前一天">←</button>
-            <input type="hidden" id="date"><button type="button" id="open-date" aria-expanded="false" aria-controls="date-panel">选日期</button>
-            <button type="button" id="next" aria-label="后一天">→</button>
-            <button type="button" id="today" class="quiet">回到今天</button>
-            <button type="button" id="write" class="quiet">写一条</button>
-          </nav>
-          <section id="date-panel" class="date-panel" aria-label="选择日期" hidden>
-            <div class="date-tools"><button id="prev-month" aria-label="上个月">‹</button><strong id="month-label" aria-live="polite"></strong><button id="next-month" aria-label="下个月">›</button></div>
-            <div class="month-grid" id="month-days"></div>
-          </section>
+
+</dialog>
+<dialog id="search" class="panel drawer" aria-labelledby="search-title">
+<header class="panel-header"><h2 id="search-title">搜索日记</h2><button type="button" data-close="search">关闭</button></header>
+<p class="panel-status" role="status"></p>
           <form id="search-form" class="date-tools" role="search">
             <label class="sr-only" for="search-text">搜索日记</label>
             <input id="search-text" type="search" maxlength="120" placeholder="搜索正文、地点或日程" required>
-            <button type="submit">搜索</button><button type="button" id="clear-search" hidden>返回当天</button>
+            <button type="submit">搜索</button>
           </form>
           <p id="search-status" role="status"></p>
           <div id="search-results"></div>
-          <div id="daily-view">
-          <details id="calendar"><summary>当天日程</summary><div id="events"></div>
+
+</dialog>
+<dialog id="calendar" class="panel sheet" aria-labelledby="calendar-title">
+<header class="panel-header"><h2 id="calendar-title">当天日程</h2><button type="button" data-close="calendar">关闭</button></header>
+<p class="panel-status" role="status"></p>
+          <div id="events"></div>
             <button type="button" id="archive" hidden>归档所选日程</button>
-          </details>
-          <p id="entry-state" role="status"></p>
-          <button type="button" id="retry-day" class="quiet" hidden>重新载入</button>
-          <div class="waterfall" id="entries"></div>
-          <details id="share" class="share">
-            <summary>分享与链接管理<span id="share-count"></span></summary>
+
+
+</dialog>
+<dialog id="share" class="panel drawer" aria-labelledby="share-title">
+<header class="panel-header"><h2 id="share-title">分享与链接管理</h2><button type="button" data-close="share">关闭</button></header>
+<p class="panel-status" role="status"></p>
+
+            <p id="share-count" role="status"></p>
             <p>勾选当天要分享的记录，再选择接收方可见的字段。</p>
             <form id="share-form">
               <fieldset><legend>可见字段</legend>
@@ -106,11 +131,8 @@
             </form>
             <div id="share-result"></div>
             <div id="links"></div>
-          </details>
-          </div>
-        </section>
-      </div>
-    </section>
+
+</dialog>
     <section id="public" class="public" hidden>
       <h1>分享的记录</h1>
       <p id="public-state" role="status"></p>

@@ -115,10 +115,15 @@ async function api(path, {method = "GET", body} = {}) {
 async function run(control, action) {
   control.disabled = true;
   notice();
+  const status = control.closest("dialog")?.querySelector(".panel-status");
+  if (status) status.textContent = "";
   try {
     await action();
   } catch (error) {
-    notice(error.message);
+    const panel = control.closest("dialog");
+    if (panel?.id === "compose") editorStatus(error.message, true);
+    else if (panel) panel.querySelector(".panel-status").textContent = error.message;
+    else notice(error.message);
   } finally {
     control.disabled = false;
   }
@@ -129,7 +134,8 @@ function eventName(event) {
 }
 
 function updateShareSelection() {
-  $("share-count").textContent = selected.size ? ` · 已选 ${selected.size} 条` : "";
+  $("share-count").textContent = selected.size ? `已选 ${selected.size} 条` : "";
+  $("share-badge").textContent = selected.size ? ` (${selected.size})` : "";
   $("create-share").disabled = !selected.size ||
     !$("share-form").querySelector('input[name="fields"]:checked');
 }
@@ -173,7 +179,7 @@ function renderEntries(target, entries, isPublic = false, isSearch = false) {
       checkbox.addEventListener("change", () => {
         if (checkbox.checked) {
           selected.add(entry.id);
-          $("share").open = true;
+
         } else {
           selected.delete(entry.id);
         }
@@ -269,7 +275,8 @@ function editEntry(entry) {
   $("backdate").hidden = true;
   editorBaseline = editorSnapshot();
   syncDraftWarning();
-  editor.elements.text.focus();
+  if ($("search").open) $("search").close();
+  openPanel("compose");
 }
 
 async function loadDay() {
@@ -411,7 +418,8 @@ editor.addEventListener("submit", (event) => {
       await api(path, {method: editing ? "PATCH" : "POST", body});
       if (editorVersion === version) resetEditor();
       const day = dateKey(occurredAt);
-      editorStatus("已保存。");
+      $("compose").close();
+      notice("已保存。");
       void setDay(day, day !== $("date").value);
     } catch (error) {
       editorStatus(error instanceof TypeError ? "无法连接服务器，内容已保留。请重试。" : error.message, true);
@@ -448,7 +456,33 @@ $("backdate").addEventListener("click", () => {
   syncDraftWarning();
   editor.elements.text.focus();
 });
-$("write").addEventListener("click", () => editor.elements.text.focus());
+function openPanel(id) {
+  const panel = $(id);
+  if (panel.open) return;
+  panel.showModal();
+  if (id === "compose") editor.elements.text.focus();
+  if (id === "search") $("search-text").focus();
+  if (id === "share") refreshLinks().catch((error) => { $("links").textContent = error.message; });
+}
+
+function closePanel(id) {
+  if (id === "compose" && (saving || recordingBusy || $("locate").disabled || !confirmDiscard())) return;
+  if (id === "compose") {
+    resetEditor();
+    editorStatus();
+  }
+  $(id).close();
+}
+
+document.querySelectorAll("[data-open]").forEach((control) =>
+  control.addEventListener("click", () => openPanel(control.dataset.open)));
+document.querySelectorAll("[data-close]").forEach((control) =>
+  control.addEventListener("click", () => closePanel(control.dataset.close)));
+$("compose").addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closePanel("compose");
+});
+$("write").addEventListener("click", () => openPanel("compose"));
 $("retry-day").addEventListener("click", loadDay);
 $("share-form").addEventListener("change", updateShareSelection);
 function renderMonth(date) {
@@ -491,8 +525,7 @@ $("next-month").addEventListener("click", () => renderMonth(new Date(shownMonth.
 
 function closeSearch() {
   searchVersion += 1;
-  $("daily-view").hidden = false;
-  $("clear-search").hidden = true;
+  if ($("search").open) $("search").close();
   $("search-results").replaceChildren();
   $("search-status").textContent = "";
 }
@@ -501,8 +534,7 @@ async function searchEntries() {
   const query = $("search-text").value.trim();
   if (!query) return closeSearch();
   const version = ++searchVersion;
-  $("daily-view").hidden = true;
-  $("clear-search").hidden = false;
+
   $("search-results").replaceChildren();
   $("search-status").textContent = "正在搜索…";
   try {
@@ -520,7 +552,7 @@ $("search-form").addEventListener("submit", (event) => {
   event.preventDefault();
   void searchEntries();
 });
-$("clear-search").addEventListener("click", closeSearch);
+
 $("prev").addEventListener("click", () => moveDay(-1));
 $("next").addEventListener("click", () => moveDay(1));
 $("today").addEventListener("click", () => setDay(dateKey()));
@@ -542,9 +574,6 @@ $("archive").addEventListener("click", () => run($("archive"), async () => {
   notice("已归档所选日程。");
 }));
 
-$("share").addEventListener("toggle", () => {
-  if ($("share").open) refreshLinks().catch((error) => { $("links").textContent = error.message; });
-});
 $("share-form").addEventListener("submit", (event) => {
   event.preventDefault();
   run(event.submitter, async () => {
@@ -601,9 +630,17 @@ $("record").addEventListener("click", async () => {
           const extension = type?.includes("mp4") ? "m4a" : type?.includes("ogg") ? "ogg" : "webm";
           const audio = new Blob(chunks, {type});
           if (!audio.size) throw new Error("没有录到声音，请重试。");
+          if (audio.size > 20 * 1024 * 1024) throw new Error(errorMessages.audio_too_large);
+          control.textContent = "正在上传…";
+          const upload = await api("integrations/audio-upload/", {method: "POST", body: {extension}});
           const body = new FormData();
-          body.append("audio", audio, "drop." + extension);
-          const {text} = await api("integrations/transcribe/", {method: "POST", body});
+          body.append("key", upload.key);
+          body.append("token", upload.token);
+          body.append("file", audio, "drop." + extension);
+          const response = await fetch(upload.url, {method: "POST", body, signal: AbortSignal.timeout(60000)});
+          if (!response.ok) throw new Error("录音上传失败，请重试。");
+          control.textContent = "正在转写…";
+          const {text} = await api("integrations/transcribe/", {method: "POST", body: {ticket: upload.ticket}});
           if (editorVersion !== version) return;
           if (!text?.trim()) throw new Error("未识别到文字。");
           const input = editor.elements.text;

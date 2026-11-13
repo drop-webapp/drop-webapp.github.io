@@ -124,3 +124,14 @@ button[aria-pressed="true"] { background: var(--accent); color: var(--sheet); }
 #search-text { flex: 1; }
 #search-results .note { display: block; }
 input[type="radio"] { accent-color: var(--accent); }
+
+.spread { display: block; max-width: 60rem; margin-inline: auto; }
+.panel { color: var(--ink); background: var(--sheet); border: 1px solid var(--line); border-radius: 1.25rem; width: min(36rem, calc(100% - 2rem)); max-height: 86dvh; padding: 1rem; overscroll-behavior: contain; }
+.panel::backdrop { background: #24143766; }
+.panel-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .85rem; }
+.panel-header h2 { margin: 0; font-size: 1.2rem; }
+.panel .capture { padding: 0; border: 0; }
+.drawer { margin: 0 0 0 auto; width: min(31rem, 100%); height: 100dvh; max-height: 100dvh; border-radius: 1.25rem 0 0 1.25rem; }
+@media (max-width: 44rem) {
+  .panel { inset: auto 0 0; margin: 0; width: 100%; max-width: 100%; height: auto; max-height: 88dvh; border-radius: 1.25rem 1.25rem 0 0; padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+}
