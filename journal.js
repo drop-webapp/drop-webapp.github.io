@@ -93,6 +93,12 @@ function eventName(event) {
   return typeof event === "string" ? event : event?.title;
 }
 
+function updateShareSelection() {
+  $("share-count").textContent = selected.size ? ` · 已选 ${selected.size} 条` : "";
+  $("create-share").disabled = !selected.size ||
+    !$("share-form").querySelector('input[name="fields"]:checked');
+}
+
 function renderEntries(target, entries, isPublic = false) {
   target.replaceChildren(...entries.map((entry) => {
     const card = element("article", undefined, "note");
@@ -115,6 +121,7 @@ function renderEntries(target, entries, isPublic = false) {
         return run(control, async () => {
           await api("entries/" + entry.id + "/", {method: "DELETE"});
           selected.delete(entry.id);
+          updateShareSelection();
           if (editing?.id === entry.id) resetEditor();
           await loadDay();
         });
@@ -130,9 +137,17 @@ function renderEntries(target, entries, isPublic = false) {
         } else {
           selected.delete(entry.id);
         }
+        updateShareSelection();
       });
       label.append(checkbox, " 分享");
-      actions.append(button("编辑", () => editEntry(entry)), remove, label);
+      const menu = element("details", undefined, "note-menu");
+      const menuLabel = element("summary", "更多");
+      remove.classList.add("destructive");
+      menu.append(menuLabel, button("编辑", () => {
+        menu.open = false;
+        editEntry(entry);
+      }), remove);
+      actions.append(label, menu);
       card.append(actions);
     }
     return card;
@@ -168,6 +183,7 @@ function resetEditor() {
   editor.reset();
   showCoordinates(null);
   renderEventOptions(null);
+  $("capture-title").textContent = "写日记";
   $("save").textContent = "记一滴";
   $("cancel").hidden = true;
 }
@@ -188,6 +204,7 @@ function editEntry(entry) {
   showCoordinates(value);
   renderEventOptions(entry.event);
   $("details").open = true;
+  $("capture-title").textContent = "编辑记录";
   $("save").textContent = "保存修改";
   $("cancel").hidden = false;
   editor.elements.text.focus();
@@ -199,6 +216,8 @@ async function loadDay() {
   const date = new Date(day + "T12:00:00");
   $("day-title").textContent = dayFormatter.format(date);
   $("year").textContent = String(date.getFullYear());
+  $("today").hidden = day === dateKey();
+  $("retry-day").hidden = true;
   $("entry-state").textContent = "正在读取记录…";
   $("entries").replaceChildren();
   $("events").textContent = "正在读取日程…";
@@ -213,9 +232,11 @@ async function loadDay() {
       archivedEvents = entries.filter((entry) => entry.archived && entry.event).map((entry) => entry.event);
       renderEventOptions();
       renderEntries($("entries"), entries);
-      $("entry-state").textContent = entries.length ? entries.length + " 条记录" : "这一天还没有记录。";
+      $("entry-state").textContent = entries.length ? entries.length + " 条记录" : "这一天还没有记录。可以写一条，也可以切换日期。";
     }).catch((error) => {
-      if (version === loadVersion) $("entry-state").textContent = error.message;
+      if (version !== loadVersion) return;
+      $("entry-state").textContent = error.message;
+      $("retry-day").hidden = false;
     }),
     api("integrations/calendar/?" + query).then(({events}) => {
       if (version !== loadVersion) return;
@@ -244,6 +265,7 @@ function renderCalendar(events) {
 
 function setDay(day, clearSelection = true) {
   if (clearSelection) selected.clear();
+  updateShareSelection();
   $("date").value = day;
   return loadDay();
 }
@@ -305,7 +327,13 @@ editor.addEventListener("submit", (event) => {
   });
 });
 
-$("cancel").addEventListener("click", resetEditor);
+$("cancel").addEventListener("click", () => {
+  resetEditor();
+  editor.elements.text.focus();
+});
+$("write").addEventListener("click", () => editor.elements.text.focus());
+$("retry-day").addEventListener("click", loadDay);
+$("share-form").addEventListener("change", updateShareSelection);
 $("date").addEventListener("change", () => setDay($("date").value || dateKey()));
 $("prev").addEventListener("click", () => moveDay(-1));
 $("next").addEventListener("click", () => moveDay(1));
@@ -349,7 +377,7 @@ $("share-form").addEventListener("submit", (event) => {
     }));
     $("share-result").replaceChildren(link, " ", copy);
     await refreshLinks();
-  });
+  }).finally(updateShareSelection);
 });
 
 $("record").addEventListener("click", async () => {

@@ -71,3 +71,41 @@ fieldset label { display: inline-block; margin-right: .7rem; }
 
 #identity { display: inline-flex; align-items: center; gap: .45rem; overflow-wrap: anywhere; }
 #identity img { width: 1.75rem; height: 1.75rem; border-radius: 50%; object-fit: cover; }
+
+/* Match the platform's reading and control conventions. */
+:root {
+  --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --tint: #ede3f6;
+}
+.wrap { max-width: 76rem; width: calc(100% - clamp(1.5rem, 7vw, 7rem)); }
+.masthead { flex-wrap: wrap; gap: .45rem .8rem; border-color: var(--line); padding-block: .65rem; }
+.brand { font: 650 1.35rem/1.2 var(--sans); }
+.brand span { font-style: normal; }
+h1 { font: 700 clamp(1.85rem, 4.5vw, 3rem)/1.14 var(--sans); }
+.guest h1 { font-size: clamp(2.6rem, 8vw, 5rem); }
+.guest { border-radius: 1.5rem; }
+.spread { gap: clamp(1.25rem, 4vw, 3rem); }
+.capture { background: var(--sheet); border: 1px solid var(--line); border-radius: 1.25rem; padding: clamp(.9rem, 2.5vw, 1.4rem); }
+.capture h2 { font: 650 1.25rem/1.2 var(--sans); }
+.date-row { border-color: var(--line); }
+button, .primary, summary, input:not([type="checkbox"]), select { min-height: 44px; }
+button, .primary, input:not([type="checkbox"]), textarea, select { border-radius: .75rem; }
+.primary { display: inline-flex; align-items: center; }
+.capture-tools .quiet, .date-tools .quiet { background: var(--tint); }
+summary { align-content: center; }
+details { padding-block: .2rem; }
+.note { border: 1px solid var(--line); border-radius: 1rem; padding: 1rem; }
+.note-actions { align-items: start; justify-content: space-between; }
+.note-actions label { display: inline-flex; align-items: center; min-height: 44px; margin: 0; }
+.note-menu { border: 0; padding: 0; }
+.note-menu button { display: block; width: 100%; text-align: start; }
+.destructive { color: #992b46; }
+input[type="checkbox"] { accent-color: var(--accent); }
+fieldset { border-radius: .75rem; }
+fieldset label, #events label { min-height: 44px; align-content: center; }
+#notice { background: var(--tint); border: 0; border-radius: .75rem; padding: .65rem .85rem; }
+#identity { min-width: 0; }
+@media (max-width: 44rem) {
+  .spread { gap: 1.5rem; }
+  #identity { max-width: 45%; }
+}
