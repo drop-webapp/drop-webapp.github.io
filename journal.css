@@ -391,3 +391,9 @@ html[data-app-mode="standalone"] .install-entry { display: none; }
 .version-footer { gap: 12px; }
 .version-footer .primary { margin-left: auto; }
 @media (max-width: 380px) { .version-footer { flex-wrap: wrap; } .version-footer button { flex: 1; white-space: nowrap; } }
+
+/* Shared voice clips reveal playback only when requested. */
+.public-recordings { margin: 12px 0; display: grid; gap: 8px; }
+.public-recording { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.public-recording input[type=range] { width: 130px; flex: 1 1 90px; }
+.public-recording small { color: var(--muted); font-size: .75rem; }

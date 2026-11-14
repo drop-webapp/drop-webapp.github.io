@@ -459,9 +459,59 @@ function renderEntries(target, entries, {publicView = false, search = false} = {
     if (meta.childElementCount) content.append(meta);
     if (!publicView) content.setAttribute("aria-label", `${entry.occurred_at ? momentLabel(entry.occurred_at) : ""}，${(entry.text || eventName(entry.event) || (entry.recordings?.length ? "一段留下的声音" : "日程")).slice(0, 100)}，打开记录`);
     card.append(content);
+    if (publicView && Array.isArray(entry.audio) && entry.audio.length) renderSharedAudio(card, entry.audio);
     if (publicView && entry.text) card.append(button("复制文字", control => void copyText(entry.text, control)));
     return card;
   }));
+}
+let sharedPlayback = null;
+let sharedPlaybackRequest = 0;
+function renderSharedAudio(card, recordings) {
+  const list = node("div", undefined, "public-recordings");
+  recordings.forEach((record, index) => {
+    const row = node("div", undefined, "public-recording");
+    const player = new Audio(); player.preload = "none";
+    const label = "语音 " + (index + 1);
+    const duration = node("small", durationLabel(record.duration_seconds || 0));
+    const status = node("small"); status.setAttribute("role", "status");
+    const seek = node("input"); seek.type = "range"; seek.min = 0; seek.max = 100; seek.step = .1; seek.value = 0; seek.disabled = true; seek.setAttribute("aria-label", label + "播放进度");
+    const control = button("播放" + label, () => {
+      const request = ++sharedPlaybackRequest;
+      if (!player.paused) { player.pause(); return; }
+      void (async () => {
+        control.disabled = true;
+        try {
+          status.textContent = "";
+          if (sharedPlayback && sharedPlayback !== player) sharedPlayback.pause();
+          const endpoint = new URL(record.playback_url, apiOrigin || location.origin);
+          const expected = new URL(apiOrigin || location.origin).origin;
+          if (endpoint.origin !== expected || !/^\/api\/public\/shares\/[A-Za-z0-9_-]{43}\/audio\/[0-9a-f-]{36}\/$/.test(endpoint.pathname) || endpoint.search || endpoint.hash) throw new Error("语音地址不可用");
+          // Validate the share again on each play; never persist the signed bucket URL.
+          const result = await api(endpoint.pathname.slice(5));
+          if (request !== sharedPlaybackRequest) return;
+          const url = new URL(result.url);
+          if (url.protocol !== "https:" || url.username || url.password) throw new Error("语音地址不可用");
+          const position = player.currentTime || 0;
+          player.src = url.href; player.currentTime = position;
+          if (sharedPlayback && sharedPlayback !== player) sharedPlayback.pause();
+          sharedPlayback = player; await player.play();
+        } catch { status.textContent = "暂时无法播放，链接可能已到期或被撤销。"; }
+        finally { control.disabled = false; }
+      })();
+    }, "soft");
+    const sync = () => { control.textContent = (player.paused ? "播放" : "暂停") + label; };
+    player.addEventListener("play", sync); player.addEventListener("pause", sync); player.addEventListener("ended", sync);
+    player.addEventListener("loadedmetadata", () => { seek.disabled = !Number.isFinite(player.duration); });
+    player.addEventListener("timeupdate", () => {
+      if (!Number.isFinite(player.duration) || !player.duration) return;
+      seek.value = String(player.currentTime / player.duration * 100);
+      duration.textContent = durationLabel(player.currentTime) + " / " + durationLabel(player.duration);
+    });
+    player.addEventListener("error", () => { sync(); status.textContent = "暂时无法播放，可以再试一次。"; });
+    seek.addEventListener("input", () => { if (Number.isFinite(player.duration)) player.currentTime = Number(seek.value) / 100 * player.duration; });
+    row.append(control, seek, duration, status); list.append(row);
+  });
+  card.append(list);
 }
 function viewEntry(entry) { currentEntry = entry; openPanel("read"); }
 function renderReader() {
@@ -1434,7 +1484,7 @@ $("share-form").addEventListener("submit", event => {
 });
 async function refreshLinks() {
   $("links-list").textContent = "正在读取分享链接…";
-  const names = {text: "正文", occurred_at: "时间", city: "城市", place: "地点", latitude: "纬度", longitude: "经度", event: "日程"};
+  const names = {text: "正文", occurred_at: "时间", city: "城市", place: "地点", latitude: "纬度", longitude: "经度", event: "日程", audio: "语音"};
   try {
     const {shares} = await api("shares/");
     $("links-list").replaceChildren(...shares.map(share => {
