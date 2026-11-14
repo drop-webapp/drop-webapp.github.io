@@ -12,6 +12,12 @@
     for (const row of records(draft)) {
       const range = row.bodyRange;
       if (!range) continue;
+      const inserted = text.slice(start, nextEnd);
+      // A new paragraph at a segment edge is handwritten context, not part of that audio segment.
+      if (start === end && start === range.end && inserted.startsWith("\n")) continue;
+      if (start === end && start === range.start && inserted.endsWith("\n")) {
+        range.start += delta; range.end += delta; continue;
+      }
       if (end < range.start || (end === range.start && start !== end)) {
         range.start += delta; range.end += delta;
       } else if (start <= range.end && end >= range.start) {
