@@ -2,13 +2,16 @@
 
 (() => {
   const sampleRate = 16000;
-  const maxDuration = 60;
+  const maxDuration = 300;
   const durationTolerance = 0.1;
+  const script = document.currentScript;
+  const workletUrl = new URL(script?.dataset.workletUrl || "pcm-recorder.js", script?.dataset.workletUrl ? document.baseURI : (script?.src || document.baseURI)).href;
+  const workletModules = new WeakMap();
 
-  function encodeWav(samples) {
+  function wavHeader(frames) {
     const headerSize = 44;
-    const dataSize = samples.length * 2;
-    const bytes = new ArrayBuffer(headerSize + dataSize);
+    const dataSize = frames * 2;
+    const bytes = new ArrayBuffer(headerSize);
     const view = new DataView(bytes);
     const writeTag = (offset, value) => {
       for (let i = 0; i < value.length; i += 1) {
@@ -28,11 +31,17 @@
     view.setUint16(34, 16, true);
     writeTag(36, "data");
     view.setUint32(40, dataSize, true);
+    return bytes;
+  }
+
+  function encodeWav(samples) {
+    const bytes = new ArrayBuffer(samples.length * 2);
+    const view = new DataView(bytes);
     for (let i = 0; i < samples.length; i += 1) {
       const sample = Math.max(-1, Math.min(1, samples[i]));
-      view.setInt16(headerSize + i * 2, Math.round(sample * (sample < 0 ? 32768 : 32767)), true);
+      view.setInt16(i * 2, Math.round(sample * (sample < 0 ? 32768 : 32767)), true);
     }
-    return new Blob([bytes], {type: "audio/wav"});
+    return new Blob([wavHeader(samples.length), bytes], {type: "audio/wav"});
   }
 
   async function prepare(blob) {
@@ -53,7 +62,7 @@
     }
 
     if (decoded.duration > maxDuration + durationTolerance) {
-      throw new Error("录音超过 60 秒，请缩短后重新录音。");
+      throw new Error("录音超过 300 秒，请缩短后重新录音。");
     }
     const frames = Math.min(Math.round(decoded.duration * sampleRate), maxDuration * sampleRate);
     if (!frames) throw new Error("没有录到声音，请重新录音。");
@@ -71,5 +80,125 @@
     }
   }
 
-  window.DropAudio = {prepare};
+  function invalidState() {
+    return new DOMException("录音状态已改变，请重新开始录音。", "InvalidStateError");
+  }
+
+  // The context and microphone belong to the caller (and may also power a meter).
+  // Only nodes created here are disconnected when this recorder finishes.
+  class PCMRecorder extends EventTarget {
+    constructor(context, stream) {
+      super();
+      this.mimeType = "audio/wav";
+      this.state = "inactive";
+      this._frames = 0;
+      this._chunks = [];
+      this._finished = false;
+      this._started = false;
+      this._stopping = false;
+      try {
+        this._source = context.createMediaStreamSource(stream);
+        this._node = new AudioWorkletNode(context, "drop-pcm-recorder", {
+          numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1],
+          channelCount: 1, channelCountMode: "explicit",
+          processorOptions: {sampleRate, maxFrames: sampleRate * maxDuration},
+        });
+        this._mute = context.createGain();
+        this._mute.gain.value = 0;
+        this._source.connect(this._node);
+        this._node.connect(this._mute);
+        this._mute.connect(context.destination);
+        this._node.port.onmessage = ({data}) => {
+          if (this._finished) return;
+          if (data.type === "pcm") {
+            this._frames = data.frames;
+            // Retain a copy so a live-transcription consumer can transfer its buffer.
+            this._chunks.push(data.buffer.slice(0));
+            this.dispatchEvent(new CustomEvent("pcm", {detail: data.buffer}));
+          } else if (data.type === "stopped") {
+            this._frames = data.frames;
+            this._finish();
+          }
+        };
+        this._node.onprocessorerror = () => {
+          const event = new Event("error");
+          event.error = new Error("录音处理意外中断，请重试。");
+          this.dispatchEvent(event);
+          this._finish();
+        };
+      } catch (error) {
+        this._disconnect();
+        throw error;
+      }
+    }
+
+    get duration() { return this._frames / sampleRate; }
+
+    start() {
+      if (this.state !== "inactive" || this._started || this._finished) throw invalidState();
+      this._started = true;
+      this.state = "recording";
+      this._node.port.postMessage({type: "start"});
+    }
+
+    pause() {
+      if (this.state === "inactive") throw invalidState();
+      if (this.state === "paused") return;
+      this.state = "paused";
+      this._node.port.postMessage({type: "pause"});
+    }
+
+    resume() {
+      if (this.state === "inactive") throw invalidState();
+      if (this.state === "recording") return;
+      this.state = "recording";
+      this._node.port.postMessage({type: "resume"});
+    }
+
+    stop() {
+      if (!this._started || this._finished || this._stopping) return;
+      this._stopping = true;
+      this.state = "inactive";
+      this._node.port.postMessage({type: "stop"});
+    }
+
+    _disconnect() {
+      for (const node of [this._source, this._node, this._mute]) {
+        try { node?.disconnect(); } catch { /* A failed setup may be only partly connected. */ }
+      }
+      if (this._node) {
+        this._node.port.onmessage = null;
+        this._node.onprocessorerror = null;
+        this._node.port.close();
+      }
+    }
+
+    _finish() {
+      if (this._finished) return;
+      this._finished = true;
+      this.state = "inactive";
+      this._disconnect();
+      const event = new Event("dataavailable");
+      event.data = new Blob([wavHeader(this._frames), ...this._chunks], {type: this.mimeType});
+      this._chunks = [];
+      this.dispatchEvent(event);
+      this.dispatchEvent(new Event("stop"));
+    }
+  }
+
+  async function createRecorder(context, stream) {
+    if (!context?.audioWorklet || typeof AudioWorkletNode === "undefined" || context.state === "closed") {
+      throw new Error("当前浏览器不支持实时录音。");
+    }
+    let loaded = workletModules.get(context);
+    if (!loaded) {
+      loaded = context.audioWorklet.addModule(workletUrl);
+      workletModules.set(context, loaded);
+      loaded.catch(() => workletModules.delete(context));
+    }
+    await loaded;
+    return new PCMRecorder(context, stream);
+  }
+
+  window.DropAudio = {prepare, createRecorder, maxDuration};
 })();

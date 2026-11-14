@@ -12,10 +12,11 @@
   <link rel="apple-touch-icon" href="./drop-icon.png?v=5ad550d3fba9">
   <link rel="manifest" href="./app.webmanifest?v=a35e87020689">
   <title>一滴 · 留住此刻</title>
-  <link rel="stylesheet" href="./journal.css?v=c6ae2822f7ab">
+  <link rel="stylesheet" href="./journal.css?v=41696c9e1d65">
   <script src="./drafts.js?v=3ba71d291b54" defer></script>
-  <script src="./audio.js?v=dcb668d0d077" defer></script>
-  <script src="./journal.js?v=862c1a46dcae" defer></script>
+  <script src="./audio.js?v=842c081aa6bd" data-worklet-url="./pcm-recorder.js?v=2c1a9e3483bd" defer></script>
+  <script src="./live-audio.js?v=b137e299ce29" defer></script>
+  <script src="./journal.js?v=f4de40b9c2ab" defer></script>
 </head>
 <body data-api-origin="https://api.drop.jyonn.space" data-share-token="">
   <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -62,9 +63,10 @@
           <button type="button" id="voice-drop" aria-label="开始语音记录" aria-describedby="voice-hint" aria-pressed="false"><img src="./drop-icon.png?v=5ad550d3fba9" width="256" height="256" alt=""><span class="drop-stop" aria-hidden="true"></span></button>
         </div>
         <div class="voice-feedback">
-          <div id="recording-meter" class="recording-meter" hidden><span class="sound-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><time id="recording-time">0:00</time><span class="recording-limit">/ 1:00</span></div>
-          <p id="voice-status" role="status">轻点水滴，记下此刻</p><p id="voice-hint" class="supporting">每段最多一分钟，说完再轻点一下</p>
+          <div id="recording-meter" class="recording-meter" hidden><span class="sound-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><time id="recording-time">0:00</time><span class="recording-limit">/ 5:00</span></div>
+          <p id="voice-status" role="status">轻点水滴，记下此刻</p><p id="voice-hint" class="supporting">边说边留下文字，说完再轻点一下</p>
         </div>
+        <section id="live-transcript" class="live-transcript" aria-label="实时转写" hidden><p id="live-transcript-label" class="eyebrow">正在听你说</p><div id="live-transcript-scroll" class="live-transcript-scroll" tabindex="0" aria-label="正在转写的文字"><span id="live-final"></span><span id="live-partial" class="live-partial"></span><span id="live-placeholder" class="supporting">想到什么，就慢慢说。</span></div></section>
         <div id="recording-actions" class="voice-secondary" hidden><button type="button" class="quiet" id="cancel-recording">取消</button><button type="button" class="soft" id="pause-recording"><svg class="icon" aria-hidden="true"><use href="#i-pause"/></svg><span>暂停一下</span></button></div>
         <div id="voice-recovery" class="voice-secondary" hidden><button type="button" class="quiet" id="voice-later">稍后再写</button><button type="button" class="soft" id="voice-retry">重新转写</button></div>
         <div id="home-actions" class="home-actions"><button type="button" class="home-action" id="quick-write"><svg class="icon" aria-hidden="true"><use href="#i-write"/></svg>写几句</button><span class="action-divider" aria-hidden="true"></span><button type="button" class="home-action" data-open="history"><svg class="icon" aria-hidden="true"><use href="#i-book"/></svg>回看</button></div>
@@ -101,7 +103,8 @@
       <div class="panel-body compose-body">
         <p id="capture-context" class="capture-context"></p>
         <div id="audio-preview" class="audio-preview" hidden><button type="button" id="audio-play" class="icon-button" aria-label="播放这段录音"><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg></button><div class="audio-track"><span>听听刚才的声音</span><input type="range" id="audio-seek" min="0" max="100" value="0" aria-label="录音播放进度"></div><time id="audio-duration">0:00</time></div>
-        <p id="audio-note" class="supporting" hidden>声音暂存在这份草稿中，保存后留下文字。</p>
+        <p id="audio-note" class="supporting" hidden>保存后，声音和文字会一起留下，随时可以回来听。</p>
+        <div id="compose-recordings"></div>
         <div id="draft-transcription" class="inline-recovery" hidden><p id="draft-transcription-status"></p><button id="retry-transcription" type="button" class="soft">重新转写</button></div>
         <label class="sr-only" for="text">日记正文</label><textarea id="text" name="text" placeholder="从此刻想到的第一句话开始…" rows="7" spellcheck="false"></textarea>
         <p id="refinement-status" class="supporting" role="status" hidden></p>

@@ -20,8 +20,11 @@ const draftTimers = new Map();
 let pendingWrites = 0, closingPanel = false, signingOut = false, startingVoice = false;
 let voiceState = "idle", capture = null, pendingVoice = null, voiceProcess = 0, audioPlayer = null, audioURL = null;
 let autoLocation = true, locationVersion = 0, sessionExpired = false;
+let savedAudioPlayer = null, savedAudioReset = null;
+let playbackVersion = 0;
 const localFailures = new Set();
 const refining = new Set();
+const audioUploads = new Map();
 const panelHistoryKey = "drop-" + Date.now();
 let skipPanelPop = false;
 if (history.state?.dropPanel) history.replaceState(null, "", location.href);
@@ -37,6 +40,9 @@ const errors = {
   invalid_transcript: "暂时无法整理这段声音，原始文字仍然保留。",
   audio_required: "没有收到录音，请再说一次。",
   audio_too_large: "这一段有些长，请分成短一点的片刻。",
+  audio_upload_incomplete: "声音还没上传完整，原录音仍在本机，可以重试。",
+  audio_storage_unavailable: "暂时无法保存声音，录音仍在本机草稿里。",
+  audio_not_found: "这段录音已经移除。",
   "Sign in required.": "登录已过期，草稿还在。重新登录后就能保存。",
   "Entry not found.": "这条记录已被删除。",
   account_changed: "这个浏览器已切换账号。为保护日记，请刷新后继续；原账号草稿仍保留在本机。",
@@ -133,7 +139,7 @@ function openPanel(id, {root = false, focus = false} = {}) {
   if (id !== "confirm" && (voiceState === "starting" || voiceState === "recording" || voiceState === "paused")) return;
   if (currentPanel === id) return;
   if (!currentPanel) panelOpener = document.activeElement;
-  if (currentPanel) { $(currentPanel).close(); if (!root) panelTrail.push(currentPanel); }
+  if (currentPanel) { stopPlayback(); $(currentPanel).close(); if (!root) panelTrail.push(currentPanel); }
   if (root) panelTrail = [];
   currentPanel = id;
   holdPanelHistory();
@@ -177,6 +183,7 @@ async function backPanel() {
     stopPlayback();
   }
   if (!currentPanel) return;
+  stopPlayback();
   $(currentPanel).close();
   const previous = panelTrail.pop(); currentPanel = null;
   if (previous) { const trail = [...panelTrail]; openPanel(previous); panelTrail = trail; }
@@ -252,10 +259,21 @@ function persistDraft(draft) {
 }
 async function removeDraft(draft) {
   draft.deleted = true;
+  audioUploads.get(draft.id)?.controller?.abort();
   clearTimeout(draftTimers.get(draft.id)); draftTimers.delete(draft.id);
   if (pendingVoice?.id === draft.id) { ++voiceProcess; pendingVoice = null; setVoiceState("idle"); }
   await draftWrite.catch(() => {});
-  try { await store?.remove(draft.id); }
+  try {
+    if (!draft.saved) {
+      const saved = new Set((draft.entry?.recordings || []).map(row => row.id));
+      const ids = new Set([...(draft.recordings || []).map(row => row.id), draft.pendingUpload?.recording_id].filter(Boolean));
+      for (const id of ids) if (!saved.has(id)) {
+        try { await api("integrations/audio/" + id + "/", {method: "DELETE"}); }
+        catch (error) { if (error.status !== 404) throw error; }
+      }
+    }
+    await store?.remove(draft.id);
+  }
   catch (error) { draft.deleted = false; throw error; }
   drafts.delete(draft.id); localFailures.delete(draft.id); renderDraftSummary();
 }
@@ -388,7 +406,7 @@ function renderEntries(target, entries, {publicView = false, search = false} = {
       const time = node("time", search || publicView ? momentLabel(entry.occurred_at) : clockFormat.format(new Date(entry.occurred_at)));
       time.dateTime = entry.occurred_at; content.append(time);
     }
-    if (entry.text || entry.event || !publicView) content.append(node("p", entry.text || eventName(entry.event) || "一个日程片刻", "note-text"));
+    if (entry.text || entry.event || !publicView) content.append(node("p", entry.text || eventName(entry.event) || (entry.recordings?.length ? "一段留下的声音" : "一个日程片刻"), "note-text"));
     const meta = node("div", undefined, "note-meta");
     const place = [entry.city, entry.place].filter(Boolean).join(" · ");
     if (place || entry.latitude != null || entry.longitude != null) {
@@ -397,7 +415,7 @@ function renderEntries(target, entries, {publicView = false, search = false} = {
     }
     if (entry.event) { const event = node("span", eventName(entry.event)); event.prepend(icon("calendar")); meta.append(event); }
     if (meta.childElementCount) content.append(meta);
-    if (!publicView) content.setAttribute("aria-label", `${entry.occurred_at ? momentLabel(entry.occurred_at) : ""}，${(entry.text || eventName(entry.event) || "日程").slice(0, 100)}，打开记录`);
+    if (!publicView) content.setAttribute("aria-label", `${entry.occurred_at ? momentLabel(entry.occurred_at) : ""}，${(entry.text || eventName(entry.event) || (entry.recordings?.length ? "一段留下的声音" : "日程")).slice(0, 100)}，打开记录`);
     card.append(content); return card;
   }));
 }
@@ -406,8 +424,9 @@ function renderReader() {
   if (!currentEntry) return;
   const entry = currentEntry;
   $("read-date").textContent = new Date(entry.occurred_at).toLocaleDateString("zh-CN", {year: "numeric", month: "long", day: "numeric", weekday: "short"}) + " · " + clockFormat.format(new Date(entry.occurred_at));
-  $("read-content").textContent = entry.text || "这段日程已留下，还可以写一点当时的感受。";
+  $("read-content").textContent = entry.text || (entry.recordings?.length ? "那一刻的声音，留在这里。" : "这段日程已留下，还可以写一点当时的感受。");
   $("read-meta").replaceChildren();
+  renderSavedRecordings($("read-meta"), entry.recordings || []);
   if (entry.event) { const el = node("p", eventName(entry.event)); el.prepend(icon("calendar")); $("read-meta").append(el); }
   if (entry.city || entry.place) { const el = node("p", [entry.city, entry.place].filter(Boolean).join(" · ")); el.prepend(icon("pin")); $("read-meta").append(el); }
   if (entry.latitude != null && entry.longitude != null) {
@@ -434,7 +453,7 @@ async function refreshHome() {
     $("last-entry").hidden = !lastEntry;
     if (lastEntry) {
       $("last-entry-label").textContent = "上次留下的 · " + momentLabel(lastEntry.occurred_at);
-      $("last-entry-text").textContent = lastEntry.text || eventName(lastEntry.event) || "一个日程片刻";
+      $("last-entry-text").textContent = lastEntry.text || eventName(lastEntry.event) || (lastEntry.recordings?.length ? "一段留下的声音" : "一个日程片刻");
     }
   } catch { /* The private capture surface remains usable when history cannot load. */ }
 }
@@ -474,6 +493,8 @@ function renderEditor() {
   $("details").hidden = true; $("capture-details").setAttribute("aria-expanded", "false");
   renderEventOptions();
   setupPlayback();
+  $("compose-recordings").replaceChildren();
+  renderSavedRecordings($("compose-recordings"), (draft.recordings || []).filter(row => !draft.audio || row.id !== draft.pendingUpload?.recording_id), draft);
   renderTranscriptionState();
   renderRefinementState();
   editorStatus(localFailures.has(draft.id) ? "本机草稿未能保存，请不要关闭页面。" : drafts.has(draft.id) ? "草稿留在本机 · 仅自己可见" : "仅自己可见", localFailures.has(draft.id));
@@ -504,6 +525,7 @@ function editEntry(entry) {
     coordinates: entryCoordinates(entry), city: entry.city || "", place: entry.place || "", event: entry.event || null,
     entry: {...entry}, source: "text", updatedAt: Date.now(), audio: null, audioApplied: false, locationDisabled: false,
     voiceTranscripts: structuredClone(entry.voice_transcripts || []),
+    recordings: structuredClone(entry.recordings || []),
   };
   openPanel("compose", {focus: true});
 }
@@ -602,18 +624,17 @@ $("editor").addEventListener("submit", async event => {
   if (saving || !currentDraft || (voiceState === "processing" && pendingVoice?.id === currentDraft.id)) return;
   readEditor();
   const draft = currentDraft;
-  if (!draft.text.trim() && !draft.entry?.archived) { editorStatus(draft.audio ? "先把声音转成文字，或写下一句话，再保存。" : "写下一句话，就可以留下这一刻。", true); return; }
-  if (draft.audio && !draft.audioApplied) {
-    if (!await ask("只保存写下的文字？", "这段录音还没转成文字。只保存正文后，这份草稿里的录音会移除。", "只保存文字", "继续转写")) return;
-  }
+  if (!draft.text.trim() && !draft.entry?.archived && !draft.audio && !draft.recordings?.length) { editorStatus("说一点，或写下一句话，就可以留下这一刻。", true); return; }
   saving = true; $("save").disabled = true; $("text").readOnly = true; $("record").disabled = true;
   editorStatus("正在收好这一刻…");
   await persistDraft(draft);
   try {
+    if (draft.audio && !draft.audioUploaded) { editorStatus("正在把声音一起收好…"); await ensureAudioUploaded(draft); }
     const body = {
       text: draft.text.trim(), occurred_at: draft.occurredAt, city: draft.city || "", place: draft.place || "",
       latitude: draft.coordinates?.latitude ?? null, longitude: draft.coordinates?.longitude ?? null, event: draft.event || null,
       transcript_receipts: (draft.voiceTranscripts || []).map(record => record.receipt).filter(Boolean),
+      audio_ids: (draft.recordings || []).map(record => record.id),
     };
     if (draft.entry?.archived) { delete body.occurred_at; delete body.event; }
     if (!draft.entry) body.client_id = draft.clientId;
@@ -671,14 +692,15 @@ function setVoiceState(state, detail) {
   $("voice-drop").setAttribute("aria-label", live ? "说好了，结束录音" : state === "error" ? "开始一段新录音" : "开始语音记录");
   $("recording-meter").hidden = !live;
   $("recording-actions").hidden = !live;
+  $("live-transcript").hidden = !live;
   $("voice-recovery").hidden = state !== "error" || !pendingVoice?.audio;
   $("home-actions").hidden = live || busy;
   document.querySelector(".home-keepsakes").hidden = live || busy;
   $("account-button").disabled = live || busy;
   const statuses = {
-    idle: ["轻点水滴，记下此刻", "每段最多一分钟，说完再轻点一下"],
+    idle: ["轻点水滴，记下此刻", "边说边留下文字，说完再轻点一下"],
     starting: ["正在打开麦克风…", "第一次使用，需要允许麦克风访问"],
-    recording: ["在听了，慢慢来", "说完轻点水滴，就能看到文字"],
+    recording: ["在听了，慢慢来", "声音和文字，都会为你留下"],
     paused: ["停一停，也没关系", "继续说，或轻点水滴结束这一段"],
     processing: ["正在把声音写下来…", "稍等一下，马上就好"],
     error: ["这段话还可以继续", "可以重试转写，也可以先留在草稿里"],
@@ -699,12 +721,12 @@ function setVoiceState(state, detail) {
 async function startRecording(draft = null) {
   if (startingVoice || capture || voiceState === "starting" || voiceState === "processing" || signingOut) return;
   updateHomeDate();
-  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+  if (!navigator.mediaDevices?.getUserMedia || (!window.MediaRecorder && !window.AudioWorkletNode)) {
     setVoiceState("error", "这个浏览器暂时无法录音，可以先写几句。");
     $("voice-hint").textContent = "也可以在 Safari 或 Chrome 中打开一滴"; return;
   }
-  if (draft?.audio && !draft.audioApplied) {
-    editorStatus("上一段声音还没转成文字。先点“重新转写”，或回到首页另记一段。", true);
+  if (draft?.audio && !draft.audioUploaded) {
+    editorStatus("上一段声音还没上传完成。先重试保存声音，再接着说。", true);
     return;
   }
   startingVoice = true;
@@ -723,10 +745,14 @@ async function startRecording(draft = null) {
     stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true, channelCount: 1}});
     // A backgrounded permission prompt must not start an invisible recording.
     if (document.hidden) { stream.getTracks().forEach(track => track.stop()); await meterContext?.close(); setVoiceState("idle"); return; }
-    const types = ["audio/mp4", "audio/webm;codecs=opus", "audio/ogg;codecs=opus"];
-    const type = types.find(value => MediaRecorder.isTypeSupported?.(value));
-    const media = new MediaRecorder(stream, type ? {mimeType: type} : undefined);
-    const recording = {media, stream, draft: recordDraft, context: meterContext, chunks: [], elapsed: 0, started: performance.now(), active: true, keepOnly: false, discard: false, frame: null, tick: null, wakeLock: null};
+    let media, pcm = false;
+    try { media = await window.DropAudio.createRecorder(meterContext, stream); pcm = true; }
+    catch {
+      const types = ["audio/mp4", "audio/webm;codecs=opus", "audio/ogg;codecs=opus"];
+      const type = types.find(value => MediaRecorder.isTypeSupported?.(value));
+      media = new MediaRecorder(stream, type ? {mimeType: type} : undefined);
+    }
+    const recording = {id: uuid(), media, pcm, stream, draft: recordDraft, context: meterContext, chunks: [], elapsed: 0, started: performance.now(), active: true, keepOnly: false, discard: false, frame: null, tick: null, wakeLock: null, queued: [], queuedBytes: 0};
     capture = recording;
     let analyser, samples;
     if (meterContext) {
@@ -747,6 +773,14 @@ async function startRecording(draft = null) {
       recording.frame = requestAnimationFrame(animate);
     };
     media.addEventListener("dataavailable", event => { if (event.data.size) recording.chunks.push(event.data); });
+    media.addEventListener("pcm", event => {
+      if (recording.live) recording.live.push(event.detail);
+      else if (!recording.streamDisabled) {
+        recording.queuedBytes += event.detail.byteLength;
+        if (recording.queuedBytes > 1024 * 1024) { recording.streamDisabled = true; recording.queued = []; }
+        else recording.queued.push(event.detail);
+      }
+    });
     media.addEventListener("error", () => { recording.keepOnly = true; finishRecording(); }, {once: true});
     media.addEventListener("stop", () => { void completeRecording(recording); }, {once: true});
     stream.getAudioTracks().forEach(track => track.addEventListener("ended", () => { if (recording.active) { recording.keepOnly = true; finishRecording(); } }, {once: true}));
@@ -755,11 +789,14 @@ async function startRecording(draft = null) {
     if (!draft) recordDraft.occurredAt = new Date().toISOString();
     void locateDraft(recordDraft, false);
     setVoiceState("recording"); $("recording-time").textContent = "0:00";
+    $("live-final").textContent = ""; $("live-partial").textContent = ""; $("live-placeholder").hidden = false;
+    $("live-transcript-label").textContent = pcm ? "正在连接实时转写…" : "录音结束后，会为你转成文字";
+    recording.grantPromise = prepareRealtime(recording);
     recording.frame = requestAnimationFrame(animate);
     recording.tick = setInterval(() => {
       const elapsed = recording.elapsed + (media.state === "recording" ? performance.now() - recording.started : 0);
       $("recording-time").textContent = durationLabel(elapsed / 1000);
-      if (elapsed >= 59000) finishRecording();
+      if (elapsed >= (window.DropAudio.maxDuration - 1) * 1000) finishRecording();
     }, 150);
     if (navigator.wakeLock) {
       void navigator.wakeLock.request("screen").then(lock => { if (recording.active) recording.wakeLock = lock; else void lock.release(); }).catch(() => {});
@@ -788,19 +825,74 @@ async function completeRecording(recording) {
   recording.stream.getTracks().forEach(track => track.stop());
   void recording.context?.close().catch(() => {});
   void recording.wakeLock?.release().catch(() => {});
-  if (recording.discard) { setVoiceState("idle"); if (meaningful(recording.draft)) { currentDraft = recording.draft; openPanel("compose"); } return; }
+  if (recording.discard) {
+    recording.live?.cancel();
+    void recording.grantPromise.then(() => discardRecordingGrant(recording));
+    setVoiceState("idle"); if (meaningful(recording.draft)) { currentDraft = recording.draft; openPanel("compose"); } return;
+  }
   const blob = new Blob(recording.chunks, {type: recording.media.mimeType || recording.chunks[0]?.type || "audio/webm"});
   if (!blob.size) { setVoiceState("error", "这一段没有录到声音，再试一次就好。"); return; }
   const draft = recording.draft;
-  draft.audio = blob; draft.audioApplied = false; draft.audioDuration = recording.elapsed / 1000; draft.source = "voice";
+  draft.audio = blob; draft.audioApplied = false; draft.audioUploaded = false;
+  draft.audioIsPcm = recording.pcm; draft.audioUploadAttempted = false;
+  draft.pendingUpload = recording.upload || null; draft.uploadIssuedAt = recording.uploadIssuedAt || 0;
+  draft.audioSession = recording.id;
+  draft.audioDuration = Number.isFinite(recording.media.duration) ? recording.media.duration : recording.elapsed / 1000;
+  draft.source = "voice";
   pendingVoice = draft; currentDraft = draft;
   const stored = await persistDraft(draft);
   if (recording.keepOnly || document.hidden) {
+    recording.keepOnly = true; recording.live?.cancel();
     setVoiceState("idle");
     if (!document.hidden) notice(stored ? "录音已留在本机草稿，随时可以继续。" : "录音暂时只能保留在当前页面，请不要关闭。");
     return;
   }
-  await transcribeDraft(draft);
+  const streamingFinished = recording.grantPromise.then(live => live?.finish()).catch(() => ({ok: false}));
+  await recording.grantPromise;
+  await transcribeDraft(draft, streamingFinished);
+}
+
+async function discardRecordingGrant(recording) {
+  if (!recording.upload?.recording_id) return;
+  try { await api("integrations/audio/" + recording.upload.recording_id + "/", {method: "DELETE"}); }
+  catch { /* No audio was uploaded; a cancelled ticket cannot start another stream. */ }
+}
+
+async function prepareRealtime(recording) {
+  try {
+    const grant = await api("integrations/audio-upload/", {method: "POST", body: {extension: "wav"}, timeout: 12000});
+    recording.upload = grant; recording.uploadIssuedAt = Date.now();
+    if (recording.discard || recording.draft.deleted || signingOut) { await discardRecordingGrant(recording); return null; }
+    if (recording.draft.audioSession === recording.id) {
+      recording.draft.pendingUpload = grant; recording.draft.uploadIssuedAt = recording.uploadIssuedAt;
+      await persistDraft(recording.draft);
+    }
+    if (!recording.pcm || !grant.stream_ticket || recording.keepOnly || recording.streamDisabled) return null;
+    const live = window.DropLiveAudio.connect(grant, {
+      onStatus(state) {
+        if (capture !== recording || !recording.active) return;
+        $("live-transcript-label").textContent = state === "listening" ? "正在听你说" : "实时转写暂时断开，录音仍在继续";
+      },
+      onText(result) {
+        recording.liveText = result.text;
+        if (capture !== recording || !recording.active) return;
+        const scroll = $("live-transcript-scroll"), atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 36;
+        $("live-final").textContent = result.final_text ? result.final_text + (result.partial_text ? "\n" : "") : "";
+        $("live-partial").textContent = result.partial_text || "";
+        $("live-placeholder").hidden = Boolean(result.text);
+        if (atBottom) scroll.scrollTop = scroll.scrollHeight;
+      },
+    });
+    recording.live = live;
+    for (const chunk of recording.queued) live.push(chunk);
+    recording.queued = [];
+    if (recording.media.state === "paused") live.pause();
+    return live;
+  } catch {
+    recording.streamDisabled = true; recording.queued = [];
+    if (capture === recording) $("live-transcript-label").textContent = "连接暂时慢了些，录音仍在继续";
+    return null;
+  }
 }
 $("voice-drop").addEventListener("click", () => { if (capture) finishRecording(); else void startRecording(); });
 $("history-record").addEventListener("click", () => { closePanels(); void startRecording(); });
@@ -808,38 +900,85 @@ $("record").addEventListener("click", () => { readEditor(); void startRecording(
 $("pause-recording").addEventListener("click", () => {
   if (!capture?.active) return;
   if (capture.media.state === "recording") {
-    capture.elapsed += performance.now() - capture.started; capture.media.pause(); setVoiceState("paused");
+    capture.elapsed += performance.now() - capture.started; capture.media.pause(); capture.live?.pause(); setVoiceState("paused");
   } else if (capture.media.state === "paused") {
-    capture.started = performance.now(); capture.media.resume(); setVoiceState("recording");
+    capture.started = performance.now(); capture.media.resume(); capture.live?.resume(); setVoiceState("recording");
   }
 });
 $("cancel-recording").addEventListener("click", async () => {
   const recording = capture;
   if (!recording) return;
   const wasRecording = recording.media.state === "recording";
-  if (wasRecording) { recording.elapsed += performance.now() - recording.started; recording.media.pause(); setVoiceState("paused"); }
+  if (wasRecording) { recording.elapsed += performance.now() - recording.started; recording.media.pause(); recording.live?.pause(); setVoiceState("paused"); }
   if (await ask("不留下这段声音？", "刚才这一段录音会被删除，已经写下的文字会保留。", "删除录音", "接着说")) finishRecording({discard: true});
-  else if (wasRecording && capture === recording && recording.active && recording.media.state === "paused") { recording.started = performance.now(); recording.media.resume(); setVoiceState("recording"); }
+  else if (wasRecording && capture === recording && recording.active && recording.media.state === "paused") { recording.started = performance.now(); recording.media.resume(); recording.live?.resume(); setVoiceState("recording"); }
 });
 
-async function transcribeDraft(draft) {
+function ensureAudioUploaded(draft) {
+  if (audioUploads.has(draft.id)) return audioUploads.get(draft.id).promise;
+  const state = {};
+  state.promise = uploadDraftAudio(draft, state).finally(() => audioUploads.delete(draft.id));
+  audioUploads.set(draft.id, state);
+  return state.promise;
+}
+
+async function uploadDraftAudio(draft, state) {
+  if (draft.audioUploaded) return draft.recordings.find(row => row.id === draft.pendingUpload.recording_id);
+  const current = () => { if (draft.saved || draft.deleted || signingOut) throw Error("录音处理已结束。"); };
+  current();
+  if (!draft.pendingUpload || Date.now() - (draft.uploadIssuedAt || 0) > 600000) {
+    const grant = await api("integrations/audio-upload/", {method: "POST", body: {
+      extension: "wav", ...(draft.pendingUpload?.recording_id ? {recording_id: draft.pendingUpload.recording_id} : {}),
+    }});
+    draft.pendingUpload = grant; draft.uploadIssuedAt = Date.now();
+    if (draft.deleted || signingOut) {
+      await api("integrations/audio/" + grant.recording_id + "/", {method: "DELETE"}).catch(() => {});
+    }
+    current(); await persistDraft(draft);
+  }
+  const grant = draft.pendingUpload;
+  let confirmed;
+  if (draft.audioUploadAttempted) {
+    try { confirmed = await api("integrations/audio-complete/", {method: "POST", body: {ticket: grant.ticket}}); }
+    catch (error) { if (error.code !== "audio_upload_incomplete") throw error; }
+  }
+  current();
+  if (!confirmed) {
+    const prepared = draft.audioIsPcm ? {blob: draft.audio, extension: "wav"} : await window.DropAudio.prepare(draft.audio);
+    current();
+    const body = new FormData(); body.append("key", grant.key); body.append("token", grant.token); body.append("file", prepared.blob, "drop.wav");
+    state.controller = new AbortController();
+    const timer = setTimeout(() => state.controller.abort(), 60000);
+    draft.audioUploadAttempted = true; await persistDraft(draft);
+    try {
+      const response = await fetch(grant.url, {method: "POST", body, signal: state.controller.signal});
+      if (!response.ok) throw Error("录音没能上传完整，原录音还在，可以再试一次。");
+    } finally { clearTimeout(timer); }
+    current();
+    confirmed = await api("integrations/audio-complete/", {method: "POST", body: {ticket: grant.ticket}});
+  }
+  current();
+  draft.recordings ||= [];
+  const index = draft.recordings.findIndex(row => row.id === confirmed.recording.id);
+  if (index < 0) draft.recordings.push(confirmed.recording); else draft.recordings[index] = confirmed.recording;
+  draft.audioUploaded = true;
+  await persistDraft(draft);
+  return confirmed.recording;
+}
+
+async function transcribeDraft(draft, streamingFinished = null) {
   if (!draft?.audio || draft.deleted || draft.saved || draft.transcribing || signingOut) return;
   const version = ++voiceProcess;
   pendingVoice = draft; draft.transcribing = true;
   setVoiceState("processing");
   if (currentPanel === "compose") { renderTranscriptionState(); $("save").disabled = true; $("record").disabled = true; }
   try {
-    const prepared = await window.DropAudio.prepare(draft.audio);
-    const upload = await api("integrations/audio-upload/", {method: "POST", body: {extension: prepared.extension}});
-    const body = new FormData(); body.append("key", upload.key); body.append("token", upload.token); body.append("file", prepared.blob, "drop.wav");
-    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 60000);
-    try {
-      const response = await fetch(upload.url, {method: "POST", body, signal: controller.signal});
-      if (!response.ok) throw new Error("录音没能上传成功，原录音还在，可以再试一次。");
-    } finally { clearTimeout(timer); }
+    $("voice-status").textContent = "正在把声音一起收好…";
+    const uploaded = await ensureAudioUploaded(draft);
+    if (streamingFinished) await streamingFinished;
     $("voice-status").textContent = "正在把声音写下来…";
     $("voice-hint").textContent = localFailures.has(draft.id) ? "请暂时不要关闭页面" : "录音已留在本机，转写后还能修改";
-    const result = await api("integrations/transcribe/", {method: "POST", body: {ticket: upload.ticket}, timeout: 95000});
+    const result = await api("integrations/transcribe/", {method: "POST", body: {recording_id: uploaded.id}, timeout: 95000});
     if (version !== voiceProcess || draft.saved || draft.deleted || signingOut) return;
     if (!result.text?.trim()) throw new Error("没有听清这一段。可以再转一次，也可以听着录音写几句。");
     if (currentPanel === "compose" && currentDraft?.id === draft.id) readEditor();
@@ -851,6 +990,7 @@ async function transcribeDraft(draft) {
         insertedRevision: draft.textRevision || 0, refinementStatus: result.refinement_available ? "pending" : "unavailable"});
     }
     draft.audioApplied = true; delete draft.transcribing;
+    if (result.recording) draft.recordings = draft.recordings.map(row => row.id === result.recording.id ? result.recording : row);
     await persistDraft(draft);
     setVoiceState("idle"); pendingVoice = null;
     if (!document.hidden) {
@@ -964,6 +1104,9 @@ async function refineDraft(draft, record) {
 }
 
 function stopPlayback() {
+  playbackVersion += 1;
+  if (savedAudioPlayer) { savedAudioPlayer.pause(); savedAudioPlayer.removeAttribute("src"); savedAudioPlayer.load(); savedAudioPlayer = null; }
+  savedAudioReset?.(); savedAudioReset = null;
   if (audioPlayer) { audioPlayer.pause(); audioPlayer.removeAttribute("src"); audioPlayer.load(); audioPlayer = null; }
   if (audioURL) { URL.revokeObjectURL(audioURL); audioURL = null; }
 }
@@ -985,8 +1128,67 @@ function setupPlayback() {
   player.addEventListener("play", sync); player.addEventListener("pause", sync); player.addEventListener("ended", sync);
   player.addEventListener("error", () => editorStatus("这段录音暂时无法播放，仍可尝试转写。", true));
 }
-$("audio-play").addEventListener("click", () => { if (!audioPlayer) return; if (audioPlayer.paused) void audioPlayer.play().catch(() => editorStatus("暂时无法播放，请再点一次。", true)); else audioPlayer.pause(); });
+$("audio-play").addEventListener("click", () => { if (!audioPlayer) setupPlayback(); if (!audioPlayer) return; if (audioPlayer.paused) void audioPlayer.play().catch(() => editorStatus("暂时无法播放，请再点一次。", true)); else audioPlayer.pause(); });
 $("audio-seek").addEventListener("input", () => { if (audioPlayer) { const duration = Number.isFinite(audioPlayer.duration) ? audioPlayer.duration : currentDraft?.audioDuration || 0; audioPlayer.currentTime = Number($("audio-seek").value) / 100 * duration; } });
+
+function renderSavedRecordings(container, recordings, draft = null) {
+  recordings.forEach((record, index) => {
+    const row = node("div", undefined, "audio-preview saved-recording");
+    const play = button("", async control => {
+      if (savedAudioPlayer && row.player === savedAudioPlayer && !savedAudioPlayer.error) {
+        if (!savedAudioPlayer.paused) savedAudioPlayer.pause();
+        else await savedAudioPlayer.play().catch(() => notice("暂时没能播放这段声音，请再点一次。"));
+        return;
+      }
+      stopPlayback();
+      const version = playbackVersion;
+      control.disabled = true;
+      try {
+        const result = await api("integrations/audio/" + record.id + "/");
+        if (version !== playbackVersion || !row.isConnected) return;
+        const player = new Audio(result.url); row.player = player; savedAudioPlayer = player;
+        savedAudioReset = () => { play.replaceChildren(icon("play")); play.setAttribute("aria-label", "播放这段录音"); };
+        const sync = () => { play.replaceChildren(icon(player.paused ? "play" : "pause")); play.setAttribute("aria-label", player.paused ? "播放这段录音" : "暂停播放"); };
+        player.addEventListener("play", sync); player.addEventListener("pause", sync); player.addEventListener("ended", sync);
+        player.addEventListener("timeupdate", () => {
+          const total = Number.isFinite(player.duration) ? player.duration : record.duration_seconds || 0;
+          seek.value = total ? String(player.currentTime / total * 100) : "0";
+          time.textContent = durationLabel(player.currentTime || total);
+        });
+        player.addEventListener("error", () => notice("暂时没能播放这段声音，请再点一次。"));
+        await player.play();
+      } catch (error) { notice(message(error)); }
+      finally { control.disabled = false; }
+    }, "icon-button");
+    play.append(icon("play")); play.setAttribute("aria-label", "播放这段录音");
+    const track = node("div", undefined, "audio-track");
+    track.append(node("span", recordings.length > 1 ? `第 ${index + 1} 段声音` : "听听那一刻"));
+    const seek = node("input"); seek.type = "range"; seek.min = "0"; seek.max = "100"; seek.value = "0"; seek.setAttribute("aria-label", "录音播放进度");
+    seek.addEventListener("input", () => {
+      if (row.player && Number.isFinite(row.player.duration)) row.player.currentTime = Number(seek.value) / 100 * row.player.duration;
+    });
+    track.append(seek);
+    const time = node("time", durationLabel(record.duration_seconds || 0));
+    row.append(play, track, time); container.append(row);
+    if (draft && !record.original_text && !(draft.voiceTranscripts || []).some(part => part.recording_id === record.id)) {
+      container.append(button("把这段声音转成文字", control => run(control, async () => {
+        const result = await api("integrations/transcribe/", {method: "POST", body: {recording_id: record.id}, timeout: 95000});
+        if (draft.deleted || draft.saved || signingOut || saving) return;
+        if (!result.text?.trim()) throw Error("这一段没有识别到文字，声音仍然保留。");
+        if (currentDraft === draft && currentPanel === "compose") readEditor();
+        const prefix = draft.text.trim() ? draft.text.trim() + "\n" : "";
+        draft.text = prefix + result.text;
+        draft.voiceTranscripts ||= [];
+        const part = {...result.transcript, prefix, insertedRevision: draft.textRevision || 0};
+        draft.voiceTranscripts.push(part);
+        Object.assign(record, result.recording);
+        await persistDraft(draft);
+        if (currentDraft === draft && currentPanel === "compose") renderEditor();
+        if (result.refinement_available) void refineDraft(draft, part);
+      })));
+    }
+  });
+}
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
@@ -994,6 +1196,7 @@ document.addEventListener("visibilitychange", () => {
     if (currentPanel === "compose" && currentDraft) { readEditor(); void persistDraft(currentDraft); }
     for (const id of [...draftTimers.keys()]) { const draft = drafts.get(id) || (currentDraft?.id === id ? currentDraft : null); if (draft) void persistDraft(draft); }
     audioPlayer?.pause();
+    savedAudioPlayer?.pause();
   } else {
     updateHomeDate();
   }
@@ -1166,6 +1369,7 @@ $("logout").addEventListener("click", async () => {
     for (const draft of drafts.values()) delete draft.transcribing;
     for (const id of [...draftTimers.keys()]) { const draft = drafts.get(id) || (currentDraft?.id === id ? currentDraft : null); if (draft) await persistDraft(draft); }
     await draftWrite.catch(() => {});
+    for (const draft of [...drafts.values()]) await removeDraft(draft);
     signingOut = true; closingPanel = false;
     try {
       await api("logout/", {method: "POST"});
