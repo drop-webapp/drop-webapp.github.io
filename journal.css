@@ -198,6 +198,15 @@ input[type="range"]::-moz-range-thumb { height: 12px; width: 12px; background: v
 .read-meta p { margin-top: .5rem; display: flex; align-items: center; gap: .5rem; }
 .read-meta details { margin-top: .7rem; }
 .read-meta summary { cursor: pointer; padding-block: .6rem; }
+.voice-transcripts { margin-block: .8rem; border-top: 1px solid var(--line); }
+.transcript-toggle { width: 100%; justify-content: space-between; padding-inline: 0; font-size: .8rem; }
+.transcript-toggle .icon { width: 15px; transition: transform .2s ease; }
+.transcript-toggle[aria-expanded="true"] .icon { transform: rotate(90deg); }
+.transcript-source { padding-block: .7rem 1rem; }
+.transcript-source + .transcript-source { border-top: 1px solid var(--line); }
+.transcript-source .transcript-text { display: block; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 .9rem/1.9 var(--sans); color: var(--ink); margin: .6rem 0; }
+.transcript-source button { font-size: .75rem; }
+#refinement-status { margin-top: .5rem; }
 .private-note { color: var(--muted); font-size: .7rem; margin-top: 1.5rem; display: flex; align-items: flex-start; gap: .4rem; }
 .private-note .icon { width: 13px; height: 13px; margin-top: 4px; }
 .reader-extras { display: flex; justify-content: space-between; border-top: 1px solid var(--line); margin-top: 1.4rem; padding-top: .5rem; }

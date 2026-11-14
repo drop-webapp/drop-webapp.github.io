@@ -12,10 +12,10 @@
   <link rel="apple-touch-icon" href="./drop-icon.png?v=5ad550d3fba9">
   <link rel="manifest" href="./app.webmanifest?v=a35e87020689">
   <title>一滴 · 留住此刻</title>
-  <link rel="stylesheet" href="./journal.css?v=a3ee91f7971b">
+  <link rel="stylesheet" href="./journal.css?v=c6ae2822f7ab">
   <script src="./drafts.js?v=3ba71d291b54" defer></script>
   <script src="./audio.js?v=dcb668d0d077" defer></script>
-  <script src="./journal.js?v=35871f9794e4" defer></script>
+  <script src="./journal.js?v=862c1a46dcae" defer></script>
 </head>
 <body data-api-origin="https://api.drop.jyonn.space" data-share-token="">
   <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -104,6 +104,8 @@
         <p id="audio-note" class="supporting" hidden>声音暂存在这份草稿中，保存后留下文字。</p>
         <div id="draft-transcription" class="inline-recovery" hidden><p id="draft-transcription-status"></p><button id="retry-transcription" type="button" class="soft">重新转写</button></div>
         <label class="sr-only" for="text">日记正文</label><textarea id="text" name="text" placeholder="从此刻想到的第一句话开始…" rows="7" spellcheck="false"></textarea>
+        <p id="refinement-status" class="supporting" role="status" hidden></p>
+        <div id="compose-transcripts" class="voice-transcripts" hidden></div>
         <div class="capture-tools"><button type="button" id="record" class="quiet"><svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg>接着说</button><button type="button" id="capture-details" class="quiet" aria-expanded="false" aria-controls="details"><svg class="icon" aria-hidden="true"><use href="#i-more"/></svg>这一刻</button></div>
         <section id="details" class="capture-details" hidden><p id="capture-time"></p><button type="button" id="backdate" class="quiet" hidden></button><div class="location-row"><svg class="icon" aria-hidden="true"><use href="#i-pin"/></svg><span id="coordinates">未附位置</span><button type="button" id="locate" class="quiet">附上位置</button><button type="button" id="clear-location" class="quiet" hidden>移除</button></div><p class="supporting">时间自动留下；位置由你决定，授权后可自动附上。</p><p id="event-label" class="supporting" hidden>关联日程</p><div id="event-options" class="event-options"></div></section>
       </div>
