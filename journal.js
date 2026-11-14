@@ -159,6 +159,7 @@ function openPanel(id, {root = false, focus = false} = {}) {
   if (id === "links") void refreshLinks();
   if (id === "drafts") renderDrafts();
   if (id === "read") renderReader();
+  if (id === "install") renderInstall();
 }
 function closePanels() {
   if (currentPanel) $(currentPanel).close();
@@ -227,6 +228,39 @@ document.querySelectorAll("dialog").forEach(panel => {
   });
 });
 $("dismiss-notice").addEventListener("click", () => { $("notice").hidden = true; });
+
+// Installation is a quiet, optional account action; never interrupt a recording.
+const installEntry = button("", () => openPanel("install"), "install-entry");
+installEntry.append(icon("install"), node("span", "放在主屏幕"), icon("next"));
+$("grants").before(installEntry);
+function renderInstall() {
+  const installed = DropWebApp.isInstalled();
+  document.querySelectorAll(".install-entry").forEach(control => { control.hidden = installed; });
+  $("install-copy").textContent = installed ? "一滴已经安放好了。以后轻点它的图标，就能回来。" : "把一滴放在主屏幕。想说的时候，轻点就能回来。";
+  $("install-steps").replaceChildren(...(installed ? [] : DropWebApp.installSteps()).map(step => node("li", step)));
+  $("install-steps").hidden = installed || DropWebApp.canInstall();
+  $("install-footer").hidden = !DropWebApp.canInstall();
+}
+window.addEventListener("drop:install-state", renderInstall);
+$("install-now").addEventListener("click", () => void run($("install-now"), async () => {
+  const result = await DropWebApp.install();
+  if (result === "dismissed") notice("没关系，想装的时候再回来。");
+}));
+renderInstall();
+
+async function copyText(value, control) {
+  const panel = currentPanel;
+  if (await DropWebApp.copy(value)) { control.textContent = "已复制"; return; }
+  if (panel !== currentPanel || !control.isConnected) return;
+  // A deliberate selection surface remains available even when clipboard
+  // permission is denied. Ordinary app labels stay unselectable.
+  $("copy-value").value = value;
+  openPanel("copy-text");
+  $("copy-value").focus({preventScroll: true}); $("copy-value").select();
+}
+const copyEntry = button("复制正文", control => void copyText(currentEntry.text, control));
+copyEntry.id = "read-copy";
+$("read").querySelector(".reader-extras").prepend(copyEntry);
 
 function meaningful(draft) {
   if (!draft) return false;
@@ -416,13 +450,16 @@ function renderEntries(target, entries, {publicView = false, search = false} = {
     if (entry.event) { const event = node("span", eventName(entry.event)); event.prepend(icon("calendar")); meta.append(event); }
     if (meta.childElementCount) content.append(meta);
     if (!publicView) content.setAttribute("aria-label", `${entry.occurred_at ? momentLabel(entry.occurred_at) : ""}，${(entry.text || eventName(entry.event) || (entry.recordings?.length ? "一段留下的声音" : "日程")).slice(0, 100)}，打开记录`);
-    card.append(content); return card;
+    card.append(content);
+    if (publicView && entry.text) card.append(button("复制文字", control => void copyText(entry.text, control)));
+    return card;
   }));
 }
 function viewEntry(entry) { currentEntry = entry; openPanel("read"); }
 function renderReader() {
   if (!currentEntry) return;
   const entry = currentEntry;
+  $("read-copy").hidden = !entry.text; $("read-copy").textContent = "复制正文";
   $("read-date").textContent = new Date(entry.occurred_at).toLocaleDateString("zh-CN", {year: "numeric", month: "long", day: "numeric", weekday: "short"}) + " · " + clockFormat.format(new Date(entry.occurred_at));
   $("read-content").textContent = entry.text || (entry.recordings?.length ? "那一刻的声音，留在这里。" : "这段日程已留下，还可以写一点当时的感受。");
   $("read-meta").replaceChildren();
@@ -1042,16 +1079,10 @@ function renderVoiceTranscripts(container, records, draft = null) {
     const part = node("section", undefined, "transcript-source");
     part.append(node("p", records.length > 1 ? `第 ${index + 1} 段 · 原始转写` : "原始转写", "eyebrow"));
     part.append(node("p", record.original_text, "transcript-text"));
-    part.append(button("复制原话", async control => {
-      try { await navigator.clipboard.writeText(record.original_text); control.textContent = "已复制"; }
-      catch { notice("暂时无法复制，可以长按文字选择。"); }
-    }));
+    part.append(button("复制原话", control => void copyText(record.original_text, control)));
     if (record.refined_text) {
       part.append(node("p", "轻整理版本", "eyebrow"), node("p", record.refined_text, "transcript-text"));
-      part.append(button("复制整理版本", async control => {
-        try { await navigator.clipboard.writeText(record.refined_text); control.textContent = "已复制"; }
-        catch { notice("暂时无法复制，可以长按文字选择。"); }
-      }));
+      part.append(button("复制整理版本", control => void copyText(record.refined_text, control)));
     } else if (draft && record.receipt) {
       const retry = button(refining.has(record.id) ? "正在轻整理…" : "再试一次轻整理", () => void refineDraft(draft, record));
       retry.disabled = refining.has(record.id); part.append(retry);
@@ -1298,8 +1329,7 @@ $("select-all").addEventListener("click", () => {
 });
 $("share-form").addEventListener("change", updateShareSelection);
 async function copyAddress(url, control) {
-  try { await navigator.clipboard.writeText(url); control.textContent = "已复制"; }
-  catch { const link = control.parentElement.querySelector("a"); if (link) { const range = document.createRange(); range.selectNodeContents(link); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); } notice("可以长按或选中链接复制。"); }
+  await copyText(url, control);
 }
 $("share-form").addEventListener("submit", event => {
   event.preventDefault();
@@ -1447,10 +1477,15 @@ if (window.visualViewport) {
 // Swiping the header down is an alternative to its visible back/close control.
 document.querySelectorAll(".panel-header").forEach(header => {
   let startPoint;
-  header.addEventListener("touchstart", event => { if (!event.target.closest("button") && event.touches.length === 1) startPoint = {x: event.touches[0].clientX, y: event.touches[0].clientY}; }, {passive: true});
+  header.addEventListener("touchstart", event => {
+    startPoint = !event.target.closest("button, a, input, textarea, summary, [contenteditable]") && event.touches.length === 1
+      ? {x: event.touches[0].clientX, y: event.touches[0].clientY} : null;
+  }, {passive: true});
+  header.addEventListener("touchmove", event => { if (event.touches.length !== 1) startPoint = null; }, {passive: true});
+  header.addEventListener("touchcancel", () => { startPoint = null; }, {passive: true});
   header.addEventListener("touchend", event => {
     const end = event.changedTouches[0];
-    if (startPoint && end.clientY - startPoint.y > 85 && Math.abs(end.clientX - startPoint.x) < 70) void backPanel();
+    if (startPoint && end && end.clientY - startPoint.y > 85 && Math.abs(end.clientX - startPoint.x) < 70) void backPanel();
     startPoint = null;
   }, {passive: true});
 });

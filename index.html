@@ -2,21 +2,26 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="application-name" content="一滴">
+  <meta name="description" content="说一句，或写几行。把微小的时刻留给自己。">
+  <meta name="format-detection" content="telephone=no, email=no, address=no">
   <meta name="referrer" content="no-referrer">
   <meta name="theme-color" content="#f7f5f8" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#201e27" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="一滴">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <link rel="icon" type="image/png" href="./drop-icon.png?v=5ad550d3fba9">
-  <link rel="apple-touch-icon" href="./drop-icon.png?v=5ad550d3fba9">
-  <link rel="manifest" href="./app.webmanifest?v=a35e87020689">
+  <link rel="apple-touch-icon" sizes="180x180" href="./drop-app-180.png?v=2d190aaae2f4">
+  <link rel="manifest" href="./app.webmanifest?v=7247ac67a93a">
   <title>一滴 · 留住此刻</title>
-  <link rel="stylesheet" href="./journal.css?v=41696c9e1d65">
+  <link rel="stylesheet" href="./journal.css?v=75000f042b34">
+  <script src="./webapp.js?v=395865f4b441" defer></script>
   <script src="./drafts.js?v=3ba71d291b54" defer></script>
   <script src="./audio.js?v=842c081aa6bd" data-worklet-url="./pcm-recorder.js?v=2c1a9e3483bd" defer></script>
   <script src="./live-audio.js?v=b137e299ce29" defer></script>
-  <script src="./journal.js?v=f4de40b9c2ab" defer></script>
+  <script src="./journal.js?v=708de599d758" defer></script>
 </head>
 <body data-api-origin="https://api.drop.jyonn.space" data-share-token="">
   <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -38,6 +43,7 @@
     <symbol id="i-play" viewBox="0 0 24 24"><path d="m9 5 10 7-10 7V5Z"/></symbol>
     <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/></symbol>
+    <symbol id="i-install" viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="3"/><path d="M12 7v8m-3-3 3 3 3-3m-4 7h2"/></symbol>
   </svg>
   <header class="masthead">
     <a class="brand" href="/" aria-label="一滴，首页">一滴<span lang="en">drop</span></a>
@@ -53,6 +59,7 @@
       <p class="guest-copy">说一句，或写几行。<br>那些微小的时刻，都可以留在这里。</p>
       <a class="primary" href="https://api.drop.jyonn.space/api/integrations/frienden/login/">用友间 Frienden 登录 <svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></a>
       <button class="quiet" id="dev-login" type="button" hidden>本地体验</button>
+      <button class="quiet install-entry" type="button" data-open="install">把一滴放在主屏幕</button>
       <p class="privacy-line"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>默认仅自己可见，分享由你决定</p>
     </section>
     <section id="journal" hidden>
@@ -130,8 +137,14 @@
 
   <dialog id="drafts" class="panel" aria-labelledby="drafts-title"><header class="panel-header"><button type="button" class="icon-button" data-back aria-label="返回"><svg class="icon" aria-hidden="true"><use href="#i-back"/></svg></button><h2 id="drafts-title" tabindex="-1">还没写完的</h2><span class="header-spacer"></span></header><div class="panel-body"><p class="supporting">不着急，想到哪里就写到哪里。草稿仅在这个浏览器保存。</p><div id="draft-list" class="draft-list"></div><p class="panel-status" role="status"></p></div></dialog>
 
-  <dialog id="account" class="panel" aria-labelledby="account-title"><header class="panel-header"><h2 id="account-title" tabindex="-1">我的一滴</h2><button type="button" class="icon-button" data-back aria-label="关闭"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></header><div class="panel-body"><div id="identity" class="identity"></div><p class="account-intro">生活不必写成文章。<br>一点声音，几句话，就很好。</p><div class="menu-list"><button type="button" data-open="drafts"><svg class="icon" aria-hidden="true"><use href="#i-write"/></svg><span>本机草稿</span><svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></button><button type="button" data-open="calendar"><svg class="icon" aria-hidden="true"><use href="#i-calendar"/></svg><span>Chronelle 日程<small>只读取你授权的分组</small></span><svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></button><button type="button" data-open="links"><svg class="icon" aria-hidden="true"><use href="#i-share"/></svg><span>分享链接</span><svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></button><a id="grants" href="https://api.drop.jyonn.space/oauth/grants/"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg><span>应用授权</span><svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></a></div><label class="setting-toggle"><span>自动附上位置<small>仅在记录时读取，需要浏览器允许</small></span><input id="auto-location" type="checkbox" role="switch"></label><p id="location-setting-status" class="supporting" role="status"></p><p class="supporting">记录默认私密。语音会通过七牛转成文字；转写完成后，云端临时录音会删除。</p><button id="logout" class="quiet destructive" type="button">退出登录</button><p class="panel-status" role="status"></p></div></dialog>
+  <dialog id="account" class="panel" aria-labelledby="account-title"><header class="panel-header"><h2 id="account-title" tabindex="-1">我的一滴</h2><button type="button" class="icon-button" data-back aria-label="关闭"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></header><div class="panel-body"><div id="identity" class="identity"></div><p class="account-intro">生活不必写成文章。<br>一点声音，几句话，就很好。</p><div class="menu-list"><button type="button" data-open="drafts"><svg class="icon" aria-hidden="true"><use href="#i-write"/></svg><span>本机草稿</span><svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></button><button type="button" data-open="calendar"><svg class="icon" aria-hidden="true"><use href="#i-calendar"/></svg><span>Chronelle 日程<small>只读取你授权的分组</small></span><svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></button><button type="button" data-open="links"><svg class="icon" aria-hidden="true"><use href="#i-share"/></svg><span>分享链接</span><svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></button><a id="grants" href="https://api.drop.jyonn.space/oauth/grants/"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg><span>应用授权</span><svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></a></div><label class="setting-toggle"><span>自动附上位置<small>仅在记录时读取，需要浏览器允许</small></span><input id="auto-location" type="checkbox" role="switch"></label><p id="location-setting-status" class="supporting" role="status"></p><p class="supporting">记录默认私密。声音长期保存在七牛，由千问实时转写并轻整理；原始转写也会保留。</p><button id="logout" class="quiet destructive" type="button">退出登录</button><p class="panel-status" role="status"></p></div></dialog>
 
+  <dialog id="install" class="panel small-panel" aria-labelledby="install-title">
+    <header class="panel-header"><h2 id="install-title" tabindex="-1">随时，打开一滴</h2><button class="icon-button" type="button" data-back aria-label="返回"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></header>
+    <div class="panel-body install-body"><img class="install-icon" src="./drop-app-180.png?v=2d190aaae2f4" width="64" height="64" alt="一滴"><p id="install-copy">把一滴放在主屏幕。想说的时候，轻点就能回来。</p><ol id="install-steps"></ol><p class="panel-status" role="status"></p></div>
+    <footer class="panel-footer" id="install-footer" hidden><button id="install-now" type="button" class="primary">安装一滴</button></footer>
+  </dialog>
+  <dialog id="copy-text" class="panel small-panel" aria-labelledby="copy-title"><header class="panel-header"><h2 id="copy-title" tabindex="-1">复制文字</h2><button class="icon-button" type="button" data-back aria-label="返回"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></header><div class="panel-body"><p class="supporting">浏览器暂时不允许直接复制。可以长按下面的文字，选择“复制”。</p><label class="sr-only" for="copy-value">要复制的文字</label><textarea id="copy-value" readonly spellcheck="false" rows="6"></textarea><p class="panel-status" role="status"></p></div></dialog>
   <dialog id="confirm" class="panel confirmation" aria-labelledby="confirm-title" aria-describedby="confirm-copy"><div class="panel-body"><h2 id="confirm-title" tabindex="-1"></h2><p id="confirm-copy"></p><p class="panel-status" role="status"></p><div class="confirmation-actions"><button type="button" class="soft" id="confirm-cancel">保留</button><button type="button" class="danger-button" id="confirm-accept">删除</button></div></div></dialog>
 </body>
 </html>
