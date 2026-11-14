@@ -16,12 +16,13 @@
   <link rel="apple-touch-icon" sizes="180x180" href="./drop-app-180.png?v=2d190aaae2f4">
   <link rel="manifest" href="./app.webmanifest?v=7247ac67a93a">
   <title>一滴 · 留住此刻</title>
-  <link rel="stylesheet" href="./journal.css?v=75000f042b34">
+  <link rel="stylesheet" href="./journal.css?v=0086a1686b22">
   <script src="./webapp.js?v=395865f4b441" defer></script>
   <script src="./drafts.js?v=3ba71d291b54" defer></script>
   <script src="./audio.js?v=842c081aa6bd" data-worklet-url="./pcm-recorder.js?v=2c1a9e3483bd" defer></script>
   <script src="./live-audio.js?v=b137e299ce29" defer></script>
-  <script src="./journal.js?v=708de599d758" defer></script>
+  <script src="./voice-versions.js?v=e5a6bf9fcc3e" defer></script>
+  <script src="./journal.js?v=2cbc0cf574b4" defer></script>
 </head>
 <body data-api-origin="https://api.drop.jyonn.space" data-share-token="">
   <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -75,7 +76,7 @@
         </div>
         <section id="live-transcript" class="live-transcript" aria-label="实时转写" hidden><p id="live-transcript-label" class="eyebrow">正在听你说</p><div id="live-transcript-scroll" class="live-transcript-scroll" tabindex="0" aria-label="正在转写的文字"><span id="live-final"></span><span id="live-partial" class="live-partial"></span><span id="live-placeholder" class="supporting">想到什么，就慢慢说。</span></div></section>
         <div id="recording-actions" class="voice-secondary" hidden><button type="button" class="quiet" id="cancel-recording">取消</button><button type="button" class="soft" id="pause-recording"><svg class="icon" aria-hidden="true"><use href="#i-pause"/></svg><span>暂停一下</span></button></div>
-        <div id="voice-recovery" class="voice-secondary" hidden><button type="button" class="quiet" id="voice-later">稍后再写</button><button type="button" class="soft" id="voice-retry">重新转写</button></div>
+        <div id="voice-recovery" class="voice-secondary" hidden><button type="button" class="quiet" id="voice-later">先听着写</button><button type="button" class="soft" id="voice-retry">重新转写</button></div>
         <div id="home-actions" class="home-actions"><button type="button" class="home-action" id="quick-write"><svg class="icon" aria-hidden="true"><use href="#i-write"/></svg>写几句</button><span class="action-divider" aria-hidden="true"></span><button type="button" class="home-action" data-open="history"><svg class="icon" aria-hidden="true"><use href="#i-book"/></svg>回看</button></div>
         <div class="home-keepsakes">
           <button id="draft-resume" class="draft-resume" type="button" data-open="drafts" hidden><span class="draft-dot" aria-hidden="true"></span><span id="draft-label"></span><svg class="icon" aria-hidden="true"><use href="#i-next"/></svg></button>
@@ -102,6 +103,23 @@
       <p class="panel-status" role="status"></p>
     </div>
     <footer class="panel-footer history-footer"><button type="button" id="write" class="quiet"><svg class="icon" aria-hidden="true"><use href="#i-write"/></svg>写几句</button><button type="button" id="history-record" class="primary"><svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg>记下此刻</button></footer>
+  </dialog>
+
+  <dialog id="voice-version" class="panel voice-version-panel" aria-labelledby="version-title">
+    <header class="panel-header"><button type="button" class="icon-button" data-back aria-label="稍后选择"><svg class="icon" aria-hidden="true"><use href="#i-back"/></svg></button><h2 id="version-title" tabindex="-1">刚才说的，想怎样留下？</h2></header>
+    <div class="panel-body">
+      <p class="supporting">原话一直保留。选一个版本，再慢慢写。</p>
+      <div class="version-tabs" role="tablist" aria-label="这段声音的文字版本">
+        <button type="button" id="version-original" role="tab" aria-controls="version-preview">原文</button>
+        <button type="button" id="version-refined" role="tab" aria-controls="version-preview">改写</button>
+      </div>
+      <p id="version-status" class="supporting" role="status"></p>
+      <div id="version-preview" class="version-preview" role="tabpanel" tabindex="0"></div>
+      <button type="button" id="version-retry" class="quiet" hidden>重新生成改写</button>
+      <button type="button" id="version-copy" class="quiet">复制这个版本</button>
+      <p class="panel-status" role="status"></p>
+    </div>
+    <footer class="panel-footer version-footer"><button type="button" id="version-use-original" class="quiet">先用原文编辑</button><button type="button" id="version-use" class="primary">用改写编辑</button></footer>
   </dialog>
 
   <dialog id="compose" class="panel compose-panel" aria-labelledby="capture-title">

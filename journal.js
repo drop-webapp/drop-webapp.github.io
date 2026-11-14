@@ -24,6 +24,7 @@ let savedAudioPlayer = null, savedAudioReset = null;
 let playbackVersion = 0;
 const localFailures = new Set();
 const refining = new Set();
+let versionRecordID = null, choosingVersion = false;
 const audioUploads = new Map();
 const panelHistoryKey = "drop-" + Date.now();
 let skipPanelPop = false;
@@ -136,6 +137,7 @@ function releasePanelHistory() {
 }
 function openPanel(id, {root = false, focus = false} = {}) {
   if (closingPanel || signingOut) return;
+  if (id === "compose" && currentDraft?.pendingVersionID) { openVersion(currentDraft, currentDraft.pendingVersionID); return; }
   if (id !== "confirm" && (voiceState === "starting" || voiceState === "recording" || voiceState === "paused")) return;
   if (currentPanel === id) return;
   if (!currentPanel) panelOpener = document.activeElement;
@@ -157,6 +159,7 @@ function openPanel(id, {root = false, focus = false} = {}) {
   if (id === "calendar") void loadCalendar();
   if (id === "share") renderShare();
   if (id === "links") void refreshLinks();
+  if (id === "voice-version") { versionRecordID = currentDraft?.pendingVersionID || versionRecordID; renderVersion(); }
   if (id === "drafts") renderDrafts();
   if (id === "read") renderReader();
   if (id === "install") renderInstall();
@@ -175,6 +178,7 @@ async function backPanel() {
     closingPanel = true;
     $("text").readOnly = true;
     readEditor();
+    currentDraft.suppressAutoOpen = true;
     const saved = await persistDraft(currentDraft);
     closingPanel = false;
     $("text").readOnly = false;
@@ -182,6 +186,10 @@ async function backPanel() {
       editorStatus("本机暂时无法保存草稿，请先保存日记，或删除这份草稿后再离开。", true); return;
     }
     stopPlayback();
+  }
+  if (currentPanel === "voice-version" && currentDraft) {
+    currentDraft.suppressAutoOpen = true;
+    await persistDraft(currentDraft);
   }
   if (!currentPanel) return;
   stopPlayback();
@@ -264,7 +272,7 @@ $("read").querySelector(".reader-extras").prepend(copyEntry);
 
 function meaningful(draft) {
   if (!draft) return false;
-  if (draft.audio) return true;
+  if (draft.audio || draft.pendingVersionID) return true;
   if (draft.entry) return draft.text !== draft.entry.text || JSON.stringify((draft.voiceTranscripts || []).map(row => [row.id, row.refined_text])) !== JSON.stringify((draft.entry.voice_transcripts || []).map(row => [row.id, row.refined_text])) || JSON.stringify(draft.coordinates) !== JSON.stringify(entryCoordinates(draft.entry)) || (!draft.entry.archived && (draft.occurredAt !== draft.entry.occurred_at || JSON.stringify(draft.event) !== JSON.stringify(draft.entry.event)));
   return Boolean(draft.text?.trim());
 }
@@ -508,7 +516,7 @@ $("view-day").addEventListener("click", () => { void setDay(dateKey(currentEntry
 
 function readEditor() {
   if (!currentDraft || currentPanel !== "compose") return;
-  currentDraft.text = $("text").value;
+  window.DropVoiceVersions.updateText(currentDraft, $("text").value);
 }
 function resizeEditor() {
   $("text").style.height = "auto";
@@ -661,6 +669,7 @@ $("editor").addEventListener("submit", async event => {
   if (saving || !currentDraft || (voiceState === "processing" && pendingVoice?.id === currentDraft.id)) return;
   readEditor();
   const draft = currentDraft;
+  if (draft.pendingVersionID) { openVersion(draft, draft.pendingVersionID); return; }
   if (!draft.text.trim() && !draft.entry?.archived && !draft.audio && !draft.recordings?.length) { editorStatus("说一点，或写下一句话，就可以留下这一刻。", true); return; }
   saving = true; $("save").disabled = true; $("text").readOnly = true; $("record").disabled = true;
   editorStatus("正在收好这一刻…");
@@ -775,6 +784,7 @@ async function startRecording(draft = null) {
   pendingVoice = null;
   closePanels(); setVoiceState("starting");
   const recordDraft = currentDraft;
+  recordDraft.skipVersionChoice = false; recordDraft.suppressAutoOpen = false;
   let stream, meterContext;
   try {
     const Context = window.AudioContext || window.webkitAudioContext;
@@ -1019,30 +1029,32 @@ async function transcribeDraft(draft, streamingFinished = null) {
     if (version !== voiceProcess || draft.saved || draft.deleted || signingOut) return;
     if (!result.text?.trim()) throw new Error("没有听清这一段。可以再转一次，也可以听着录音写几句。");
     if (currentPanel === "compose" && currentDraft?.id === draft.id) readEditor();
-    const prefix = draft.text?.trim() ? draft.text.trim() + "\n" : "";
-    draft.text = prefix + result.text.trim();
     if (result.transcript) {
       draft.voiceTranscripts ||= [];
-      draft.voiceTranscripts.push({...result.transcript, prefix,
-        insertedRevision: draft.textRevision || 0, refinementStatus: result.refinement_available ? "pending" : "unavailable"});
+      const record = {...result.transcript, versionFlow: true, previewVersion: "refined",
+        receipts: [result.transcript.receipt], refinementStatus: result.refinement_available ? "pending" : "unavailable"};
+      draft.voiceTranscripts.push(record);
+      if (!draft.skipVersionChoice) draft.pendingVersionID = record.id;
+    } else {
+      // A server response without a signed transcript is still a selectable local candidate.
+      const record = {id: uuid(), original_text: result.text.trim(), refined_text: "", versionFlow: true,
+        previewVersion: "original", refinementStatus: "unavailable"};
+      (draft.voiceTranscripts ||= []).push(record);
+      if (!draft.skipVersionChoice) draft.pendingVersionID = record.id;
     }
     draft.audioApplied = true; delete draft.transcribing;
     if (result.recording) draft.recordings = draft.recordings.map(row => row.id === result.recording.id ? result.recording : row);
     await persistDraft(draft);
     setVoiceState("idle"); pendingVoice = null;
     if (!document.hidden) {
-      if (currentPanel === "compose" && currentDraft?.id === draft.id) {
-        const position = $("text").selectionStart;
-        const typing = document.activeElement === $("text");
-        $("text").value = draft.text; resizeEditor(); setupPlayback(); renderTranscriptionState(); renderRefinementState();
-        if (typing) $("text").setSelectionRange(position, position);
-        editorStatus(localFailures.has(draft.id) ? "本机草稿未能保存，请不要关闭页面。" : "草稿留在本机 · 仅自己可见", localFailures.has(draft.id));
-      } else if (!currentPanel) {
-        currentDraft = draft; openPanel("compose"); $("capture-title").focus({preventScroll: true});
-      } else {
-        if (currentPanel === "drafts") renderDrafts();
-        notice("声音已转成文字，草稿里可以继续写。");
-      }
+      if (currentDraft?.id === draft.id && currentPanel === "compose") {
+        if (draft.pendingVersionID && !draft.suppressAutoOpen) openVersion(draft, draft.pendingVersionID);
+        else renderEditor();
+      } else if (!currentPanel && !draft.suppressAutoOpen) {
+        currentDraft = draft;
+        if (draft.pendingVersionID) openVersion(draft, draft.pendingVersionID);
+        else openPanel("compose");
+      } else if (currentPanel === "drafts") renderDrafts();
     }
     if (result.transcript && result.refinement_available) void refineDraft(draft, draft.voiceTranscripts.at(-1));
   } catch (error) {
@@ -1060,7 +1072,7 @@ async function transcribeDraft(draft, streamingFinished = null) {
   }
 }
 $("voice-retry").addEventListener("click", () => { if (pendingVoice) void transcribeDraft(pendingVoice); });
-$("voice-later").addEventListener("click", () => { currentDraft = pendingVoice; setVoiceState("idle"); if (currentDraft) openPanel("compose"); });
+$("voice-later").addEventListener("click", () => { currentDraft = pendingVoice; setVoiceState("idle"); if (currentDraft) { currentDraft.skipVersionChoice = true; void persistDraft(currentDraft); openPanel("compose"); } });
 $("retry-transcription").addEventListener("click", () => { readEditor(); if (currentDraft) void transcribeDraft(currentDraft); });
 
 function renderVoiceTranscripts(container, records, draft = null) {
@@ -1087,6 +1099,7 @@ function renderVoiceTranscripts(container, records, draft = null) {
       const retry = button(refining.has(record.id) ? "正在轻整理…" : "再试一次轻整理", () => void refineDraft(draft, record));
       retry.disabled = refining.has(record.id); part.append(retry);
     }
+    if (draft) part.append(button("选择原文 / 改写", () => { readEditor(); openVersion(draft, record.id); }));
     content.append(part);
   });
   container.replaceChildren(toggle, content);
@@ -1103,9 +1116,86 @@ function renderRefinementState() {
     : "原话已保留，可以直接保存，也可以稍后再整理。";
 }
 
+function openVersion(draft, id) {
+  const record = draft?.voiceTranscripts?.find(row => row.id === id);
+  if (!record || draft.saved || draft.deleted) return;
+  if (!record.versionFlow && !record.selectedVersion) {
+    // Older drafts already inserted ASR/refinement. Locate that existing segment instead of duplicating it.
+    const start = typeof record.prefix === "string" ? record.prefix.length : -1;
+    const version = record.refinementStatus === "applied" ? "refined" : "original";
+    const text = version === "refined" ? record.refined_text : record.original_text;
+    record.selectedVersion = version; record.appliedText = text;
+    if (start >= 0 && draft.text.startsWith(record.prefix) && draft.text.slice(start, start + text.length) === text) {
+      record.bodyRange = {start, end: start + text.length};
+    } else { record.rangeLost = true; record.bodyEdited = true; }
+  }
+  currentDraft = draft; versionRecordID = id;
+  openPanel("voice-version", {root: true}); renderVersion();
+  if (record.refinementStatus === "pending" && !refining.has(record.id) && record.receipt) void refineDraft(draft, record);
+}
+function versionRecord() {
+  return currentDraft?.voiceTranscripts?.find(row => row.id === (versionRecordID || currentDraft.pendingVersionID));
+}
+function renderVersion() {
+  const record = versionRecord();
+  if (!record) return;
+  const version = record.previewVersion || (record.refined_text ? "refined" : "original");
+  const rewritten = version === "refined", busy = refining.has(record.id) || record.refinementStatus === "pending";
+  $("version-original").setAttribute("aria-selected", String(!rewritten));
+  $("version-refined").setAttribute("aria-selected", String(rewritten));
+  $("version-preview").setAttribute("aria-labelledby", rewritten ? "version-refined" : "version-original");
+  $("version-preview").textContent = rewritten ? record.refined_text || (busy ? "正在把这段话轻轻整理成文…" : "改写暂时没有完成。原文和声音仍然保留着。") : record.original_text;
+  $("version-status").textContent = record.refined_text ? "两个版本都留着，由你决定这一段。" : busy ? "改写正在生成，也可以先用原文继续。" : "可以重试改写，也可以直接用原文编辑。";
+  $("version-use").textContent = rewritten ? "用改写编辑" : "用原文编辑";
+  $("version-use").disabled = choosingVersion || (rewritten && !record.refined_text);
+  $("version-use-original").disabled = choosingVersion;
+  $("version-use-original").hidden = !rewritten;
+  $("version-copy").disabled = rewritten && !record.refined_text;
+  $("version-retry").hidden = Boolean(record.refined_text) || !record.receipt;
+  $("version-retry").disabled = busy;
+  $("version-retry").textContent = busy ? "正在生成改写…" : "重新生成改写";
+}
+async function chooseVersion(version) {
+  const draft = currentDraft, record = versionRecord(), owner = String(session?.user_id || "");
+  if (!draft || !record || saving || choosingVersion) return;
+  choosingVersion = true; renderVersion();
+  try {
+    const lost = Boolean(record.selectedVersion && (!record.bodyRange || record.rangeLost));
+    if (lost) {
+      if (!await ask("追加到正文末尾？", "这段已和其他正文一起修改，无法可靠区分。追加所选版本，保留已有正文。", "追加到末尾", "先不替换")) return;
+    } else if (window.DropVoiceVersions.needsConfirmation(draft, record)) {
+      if (!await ask("替换这一段的修改？", "你改过这一段。仅替换这段正文，其他段落保持原样。", "替换这一段", "保留修改")) return;
+    }
+    if (draft.saved || draft.deleted || signingOut || currentDraft !== draft || String(session?.user_id || "") !== owner
+        || !draft.voiceTranscripts?.includes(record)) return;
+    if (lost) { delete record.selectedVersion; delete record.bodyRange; record.rangeLost = false; }
+    window.DropVoiceVersions.apply(draft, record, version);
+    await persistDraft(draft);
+    openPanel("compose", {root: true, focus: true});
+  } catch (error) { notice(message(error)); }
+  finally { choosingVersion = false; if (currentPanel === "voice-version") renderVersion(); }
+}
+for (const version of ["original", "refined"]) $("version-" + version).addEventListener("click", () => {
+  const record = versionRecord(); if (!record) return;
+  record.previewVersion = version; renderVersion(); void persistDraft(currentDraft);
+});
+document.querySelector(".version-tabs").addEventListener("keydown", event => {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  const target = event.key === "Home" ? "original" : event.key === "End" ? "refined" : versionRecord()?.previewVersion === "original" ? "refined" : "original";
+  $("version-" + target).click(); $("version-" + target).focus();
+});
+$("version-use").addEventListener("click", () => void chooseVersion(versionRecord()?.previewVersion || "original"));
+$("version-use-original").addEventListener("click", () => void chooseVersion("original"));
+$("version-retry").addEventListener("click", () => { const record = versionRecord(); if (record) void refineDraft(currentDraft, record); });
+$("version-copy").addEventListener("click", control => {
+  const record = versionRecord(); if (record) void copyText(record.previewVersion === "refined" ? record.refined_text : record.original_text, control.currentTarget);
+});
+
 async function refineDraft(draft, record) {
   if (refining.has(record.id) || draft.saved || draft.deleted || signingOut || saving) return;
-  refining.add(record.id); record.refinementStatus = "pending";
+  refining.add(record.id); record.refinementStatus = "pending"; void persistDraft(draft);
+  if (currentPanel === "voice-version" && currentDraft?.id === draft.id) renderVersion();
   if (currentPanel === "compose" && currentDraft?.id === draft.id) renderRefinementState();
   try {
     const result = await api("integrations/refine-transcript/", {
@@ -1114,15 +1204,10 @@ async function refineDraft(draft, record) {
     if (draft.saved || draft.deleted || signingOut || saving) return;
     if (currentPanel === "compose" && currentDraft?.id === draft.id) readEditor();
     if (result.status !== "ready" || !result.transcript?.refined_text) throw Error("refinement unavailable");
+    record.receipts = [...new Set([...(record.receipts || []), record.receipt].filter(Boolean))];
     Object.assign(record, result.transcript);
-    const unchanged = record.prefix !== undefined && draft.text === record.prefix + record.original_text
-      && (draft.textRevision || 0) === record.insertedRevision;
-    if (unchanged) {
-      draft.text = record.prefix + record.refined_text; record.refinementStatus = "applied";
-      if (currentPanel === "compose" && currentDraft?.id === draft.id) {
-        $("text").value = draft.text; resizeEditor();
-      }
-    } else { record.refinementStatus = "suggestion"; }
+    record.receipts = [...new Set([...(record.receipts || []), record.receipt].filter(Boolean))];
+    record.refinementStatus = "suggestion";
     await persistDraft(draft);
   } catch {
     if (!draft.saved && !draft.deleted && !signingOut) {
@@ -1130,6 +1215,7 @@ async function refineDraft(draft, record) {
     }
   } finally {
     refining.delete(record.id);
+    if (currentPanel === "voice-version" && currentDraft?.id === draft.id) renderVersion();
     if (!draft.saved && !draft.deleted && currentPanel === "compose" && currentDraft?.id === draft.id) renderRefinementState();
   }
 }

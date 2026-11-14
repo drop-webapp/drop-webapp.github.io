@@ -381,3 +381,13 @@ html[data-app-mode="standalone"] .install-entry { display: none; }
 .permission-actions { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .7rem; margin-top: 1.5rem; }
 .permission-grant { padding: 1rem 0; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; justify-content: space-between; }
 .permission-grant p { font-size: .9rem; }
+
+/* A quiet reading surface between speaking and editing. */
+.voice-version-panel { max-width: 640px; }
+.version-tabs { display: flex; gap: 4px; padding: 4px; margin: 24px 0 18px; border-radius: 14px; background: var(--subtle); }
+.version-tabs button { flex: 1; min-height: 42px; border-radius: 10px; background: transparent; color: var(--muted); }
+.version-tabs button[aria-selected="true"] { background: var(--surface); color: var(--accent-strong); }
+.version-preview { min-height: 200px; padding: 22px 0 34px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 1.06rem; line-height: 1.95; color: var(--ink); }
+.version-footer { gap: 12px; }
+.version-footer .primary { margin-left: auto; }
+@media (max-width: 380px) { .version-footer { flex-wrap: wrap; } .version-footer button { flex: 1; white-space: nowrap; } }
