@@ -1,0 +1,27 @@
+.permissions-page { min-height: 100dvh; }
+.permissions-page .brand { display: flex; align-items: center; gap: 8px; }
+.permissions-page .brand img { object-fit: contain; }
+.permissions-content { max-width: 540px; }
+.permissions-content h1 { font-size: clamp(1.7rem, 5vw, 2.2rem); line-height: 1.45; letter-spacing: -.025em; }
+.permissions-content > .supporting { line-height: 1.9; }
+.connection-permission { display: flex; gap: 16px; padding: 20px 0; border-bottom: 1px solid var(--line); }
+.connection-mark { flex: 0 0 24px; padding-top: 2px; color: var(--accent); font-size: 1.2rem; }
+.connection-permission h2, .permission-grant h2 { font-size: 1rem; font-weight: 600; margin: 0 0 7px; }
+.connection-permission p, .connection-note { margin: 0; font-size: .82rem; color: var(--muted); line-height: 1.9; }
+.connection-options { margin: 30px 0 18px; }
+.connection-options legend { font-size: .88rem; }
+.connection-options > p { font-size: .78rem; margin: 8px 0 18px; }
+.connection-option { display: flex; align-items: center; justify-content: space-between; gap: 22px; padding: 16px 0; cursor: pointer; }
+.connection-option + .connection-option { border-top: 1px solid var(--line); }
+.connection-option strong { font-size: .95rem; font-weight: 500; }
+.connection-option small { display: block; font-size: .75rem; color: var(--muted); margin-top: 5px; line-height: 1.6; }
+.connection-option input[role=switch] { appearance: none; flex: 0 0 44px; width: 44px; height: 26px; border-radius: 20px; background: var(--line); border: 0; position: relative; cursor: pointer; }
+.connection-option input[role=switch]::after { content: ''; position: absolute; height: 20px; width: 20px; left: 3px; top: 3px; border-radius: 50%; background: var(--surface); transition: transform .18s; }
+.connection-option input[role=switch]:checked { background: var(--accent); }
+.connection-option input[role=switch]:checked::after { transform: translateX(18px); }
+.connection-option input:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.connection-note { padding: 18px 0 8px; font-size: .75rem; }
+.permission-actions { padding: 16px 0 max(16px, env(safe-area-inset-bottom)); }
+.permission-actions button { min-height: 46px; }
+@media (max-width: 480px) { .permissions-page .masthead { padding-inline: 20px; } .permissions-content { width: calc(100% - 40px); margin-top: 28px; } .permission-actions { display: grid; grid-template-columns: 1fr 1.4fr; } }
+@media (prefers-reduced-motion: reduce) { .connection-option input[role=switch]::after { transition: none; } }
